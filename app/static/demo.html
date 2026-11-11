@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI Failure Triage</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5b6475;
+    --border: #d9dde5; --accent: #2457c5; --accent-text: #ffffff;
+    --banner-bg: #fff4d6; --banner-text: #5a4300;
+    --err-bg: #fde8e8; --err-text: #8a1c1c; --code-bg: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1d2128; --text: #e6e9ef; --muted: #a0a8b8;
+      --border: #333a45; --accent: #6b9bff; --accent-text: #0b1220;
+      --banner-bg: #3a3112; --banner-text: #f3dd9a;
+      --err-bg: #3d1c1c; --err-text: #ffb4b4; --code-bg: #262b33;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: var(--banner-bg); color: var(--banner-text);
+    padding: 10px 16px; text-align: center; font-size: 14px;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 24px; margin: 8px 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 16px;
+  }
+  label { font-weight: 600; display: block; margin-bottom: 6px; }
+  textarea {
+    width: 100%; min-height: 220px; resize: vertical; padding: 10px;
+    font: 13px/1.4 ui-monospace, Consolas, monospace;
+    background: var(--code-bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  button {
+    font: inherit; border-radius: 8px; padding: 8px 14px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  .samples button { font-size: 13px; padding: 4px 10px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .error {
+    background: var(--err-bg); color: var(--err-text);
+    border-radius: 8px; padding: 10px 12px; margin-top: 12px;
+  }
+  .hidden { display: none; }
+  .category { font-size: 22px; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+  h2 { font-size: 15px; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .lines {
+    background: var(--code-bg); border-radius: 8px; padding: 8px 0;
+    overflow-x: auto; font: 13px/1.5 ui-monospace, Consolas, monospace;
+  }
+  .line { display: flex; white-space: pre; padding: 0 10px; }
+  .line .num { color: var(--muted); min-width: 3.5em; padding-right: 10px; text-align: right; user-select: none; flex: none; }
+  ul.rules { margin: 0; padding-left: 20px; }
+  ul.rules li { overflow-wrap: anywhere; }
+  .meter { height: 8px; background: var(--code-bg); border-radius: 4px; overflow: hidden; max-width: 260px; }
+  .meter > div { height: 100%; background: var(--accent); }
+  details summary { cursor: pointer; color: var(--muted); margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="banner">Phase 1: rule-based baseline. LLM and retrieval versions are on the roadmap.</div>
+<main>
+  <h1>CI Failure Triage</h1>
+  <p class="lead">Paste a failing CI build log. Transparent keyword/regex rules suggest a failure category,
+    show the lines that matched, and suggest a next step. No AI model is used in this version.</p>
+
+  <div class="card">
+    <label for="log">CI log</label>
+    <textarea id="log" spellcheck="false" placeholder="Paste the output of the failing CI step here (max 200 KB)..."></textarea>
+    <div class="row">
+      <button id="triage" class="primary" type="button">Triage</button>
+      <button id="clear" type="button">Clear</button>
+      <span id="size" class="hint"></span>
+    </div>
+    <div class="row samples" id="samples"><span class="hint">Load a synthetic sample:</span></div>
+    <div id="error" class="error hidden" role="alert"></div>
+  </div>
+
+  <div id="result" class="card hidden" aria-live="polite">
+    <p class="category" id="r-category"></p>
+    <p class="muted" id="r-description"></p>
+
+    <h2>Confidence</h2>
+    <div class="meter"><div id="r-meter"></div></div>
+    <p class="hint"><span id="r-confidence"></span> (a heuristic score from the rules, not a probability)</p>
+
+    <h2>Suggested next step</h2>
+    <p id="r-next"></p>
+
+    <h2>Evidence</h2>
+    <div id="r-evidence"></div>
+
+    <h2>Rules that fired</h2>
+    <div id="r-rules"></div>
+
+    <details>
+      <summary>Error-looking lines with context</summary>
+      <div id="r-context"></div>
+    </details>
+  </div>
+</main>
+
+<script>
+  // All text from logs or the server is written with textContent, never as HTML,
+  // so a pasted log cannot inject markup or scripts into this page.
+  const MAX_BYTES = 200 * 1024;
+  const byId = (id) => document.getElementById(id);
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function showError(message) {
+    const box = byId("error");
+    box.textContent = message;
+    box.classList.remove("hidden");
+  }
+
+  function hideError() {
+    byId("error").classList.add("hidden");
+  }
+
+  function updateSize() {
+    const bytes = new Blob([byId("log").value]).size;
+    byId("size").textContent = bytes ? (bytes / 1024).toFixed(1) + " KB / 200 KB" : "";
+  }
+
+  // Build a block of numbered lines: [{line_number, text}, ...]
+  function linesBlock(items) {
+    if (!items.length) return el("p", "hint", "None.");
+    const box = el("div", "lines");
+    for (const item of items) {
+      const row = el("div", "line");
+      row.append(el("span", "num", String(item.line_number)), el("span", "", item.text));
+      box.append(row);
+    }
+    return box;
+  }
+
+  function render(r) {
+    byId("r-category").textContent = r.category;
+    byId("r-description").textContent = r.description;
+    byId("r-confidence").textContent = Math.round(r.confidence * 100) + "%";
+    byId("r-meter").style.width = Math.round(r.confidence * 100) + "%";
+    byId("r-next").textContent = r.next_step;
+    byId("r-evidence").replaceChildren(linesBlock(r.evidence));
+    byId("r-context").replaceChildren(linesBlock(r.error_context));
+
+    if (r.rules_fired.length) {
+      const list = el("ul", "rules");
+      for (const rule of r.rules_fired) {
+        list.append(el("li", "", rule.name + " (" + rule.category + ", weight " + rule.weight + ")"));
+      }
+      byId("r-rules").replaceChildren(list);
+    } else {
+      byId("r-rules").replaceChildren(el("p", "hint", "No rule matched, so the category is unknown."));
+    }
+    byId("result").classList.remove("hidden");
+  }
+
+  async function triage() {
+    hideError();
+    const log = byId("log").value;
+    if (!log.trim()) { showError("Please paste a CI log first."); return; }
+    if (new Blob([log]).size > MAX_BYTES) {
+      showError("This log is larger than 200 KB. Paste only the failing step's output.");
+      return;
+    }
+    const button = byId("triage");
+    button.disabled = true;
+    button.textContent = "Triaging...";
+    try {
+      const response = await fetch("/triage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ log: log }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showError(body.error || "Something went wrong (HTTP " + response.status + ").");
+        return;
+      }
+      render(body);
+    } catch (e) {
+      showError("Could not reach the server. Is it running?");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Triage";
+    }
+  }
+
+  async function loadSample(name) {
+    hideError();
+    try {
+      const response = await fetch("/samples/" + encodeURIComponent(name));
+      const body = await response.json();
+      if (!response.ok) { showError(body.error || "Could not load that sample."); return; }
+      byId("log").value = body.log;
+      updateSize();
+      byId("result").classList.add("hidden");
+    } catch (e) {
+      showError("Could not load that sample.");
+    }
+  }
+
+  async function loadSampleButtons() {
+    try {
+      const response = await fetch("/samples");
+      const samples = await response.json();
+      for (const s of samples) {
+        const button = el("button", "", s.name.replaceAll("_", " "));
+        button.type = "button";
+        button.title = s.note;
+        button.addEventListener("click", () => loadSample(s.name));
+        byId("samples").append(button);
+      }
+    } catch (e) {
+      byId("samples").append(el("span", "hint", "(could not load samples)"));
+    }
+  }
+
+  byId("triage").addEventListener("click", triage);
+  byId("clear").addEventListener("click", () => {
+    byId("log").value = "";
+    updateSize();
+    hideError();
+    byId("result").classList.add("hidden");
+  });
+  byId("log").addEventListener("input", updateSize);
+  loadSampleButtons();
+</script>
+</body>
+</html>

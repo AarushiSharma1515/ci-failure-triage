@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from triage.categories import CATEGORIES
@@ -20,6 +20,7 @@ from triage.schemas import ErrorResponse, TriageRequest, TriageResponse
 MODEL_NAME = "rule-based v0"
 BASE_DIR = Path(__file__).resolve().parent.parent
 SAMPLES_DIR = BASE_DIR / "data" / "samples"
+DEMO_PAGE = BASE_DIR / "app" / "static" / "demo.html"
 
 
 def load_sample_index() -> dict[str, dict]:
@@ -47,6 +48,11 @@ def http_error_handler(request: Request, exc: StarletteHTTPException):
 def validation_error_handler(request: Request, exc: RequestValidationError):
     # FastAPI's default here is 422; we use 400 and a plain message instead.
     return error(400, 'Request body must be JSON like {"log": "<text of the CI log>"}.')
+
+
+@app.get("/demo", include_in_schema=False)
+def demo():
+    return FileResponse(DEMO_PAGE, media_type="text/html")
 
 
 @app.get("/health")
