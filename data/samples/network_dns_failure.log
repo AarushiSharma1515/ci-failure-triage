@@ -1,0 +1,15 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run actions/checkout@v4
+Syncing repository: example-org/example-app
+##[endgroup]
+##[group]Run ./scripts/download-fixtures.sh
+Downloading test fixtures from https://fixtures.example.org/v2/bundle.tar.gz
+curl: (6) Could not resolve host: fixtures.example.org
+Retrying in 5 seconds (attempt 2/3)...
+curl: (6) Could not resolve host: fixtures.example.org
+Retrying in 5 seconds (attempt 3/3)...
+curl: (6) Could not resolve host: fixtures.example.org
+download-fixtures.sh: giving up after 3 attempts
+##[error]Process completed with exit code 6.
+##[endgroup]
+Post job cleanup.

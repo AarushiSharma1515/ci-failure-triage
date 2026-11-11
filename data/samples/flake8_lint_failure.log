@@ -1,0 +1,15 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run actions/setup-python@v5
+Successfully set up CPython (3.12.5)
+##[endgroup]
+##[group]Run pip install flake8==7.1.1
+Successfully installed flake8-7.1.1 mccabe-0.7.0 pycodestyle-2.12.1 pyflakes-3.2.0
+##[endgroup]
+##[group]Run flake8 src tests
+src/example_app/routes.py:3:1: F401 'os' imported but unused
+src/example_app/routes.py:12:80: E501 line too long (97 > 79 characters)
+src/example_app/models.py:45:5: E303 too many blank lines (3)
+tests/test_routes.py:8:1: E302 expected 2 blank lines, found 1
+##[error]Process completed with exit code 1.
+##[endgroup]
+Post job cleanup.

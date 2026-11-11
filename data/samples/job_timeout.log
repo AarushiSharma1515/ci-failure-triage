@@ -1,0 +1,17 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run ./scripts/integration-tests.sh
+Starting integration test suite (42 scenarios)
+[scenario 1/42] create order ... ok (12.1s)
+[scenario 2/42] cancel order ... ok (10.8s)
+[scenario 3/42] refund order ... ok (14.0s)
+[scenario 4/42] bulk import 10k rows ...
+waiting for import job to finish (poll 1)
+waiting for import job to finish (poll 2)
+waiting for import job to finish (poll 3)
+waiting for import job to finish (poll 4)
+waiting for import job to finish (poll 5)
+waiting for import job to finish (poll 6)
+waiting for import job to finish (poll 7)
+##[error]The job running on runner GitHub Actions 7 has exceeded the maximum execution time of 30 minutes.
+##[error]The operation was canceled.
+Cleaning up orphan processes

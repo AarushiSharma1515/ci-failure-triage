@@ -1,0 +1,20 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run actions/checkout@v4
+Syncing repository: example-org/example-web
+##[endgroup]
+##[group]Run npm run build
+> example-web@1.4.0 build
+> tsc -p tsconfig.json
+
+src/api/client.ts(27,7): error TS2322: Type 'string' is not assignable to type 'number'.
+src/api/client.ts(41,18): error TS2339: Property 'userId' does not exist on type 'Session'.
+src/pages/Checkout.tsx(88,3): error TS2554: Expected 2 arguments, but got 1.
+
+Found 3 errors in 2 files.
+
+Errors  Files
+     2  src/api/client.ts:27
+     1  src/pages/Checkout.tsx:88
+##[error]Process completed with exit code 2.
+##[endgroup]
+Post job cleanup.

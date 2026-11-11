@@ -1,0 +1,18 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run npm run lint
+> example-web@1.4.0 lint
+> eslint src --max-warnings 0
+
+/home/runner/work/example-web/example-web/src/pages/Checkout.tsx
+  14:10  error  'useMemo' is defined but never used          @typescript-eslint/no-unused-vars
+  52:5   error  Unexpected console statement                 no-console
+
+/home/runner/work/example-web/example-web/src/utils/format.ts
+  3:1  error  Expected indentation of 2 spaces but found 4  indent
+
+✖ 3 problems (3 errors, 0 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+
+##[error]Process completed with exit code 1.
+##[endgroup]
+Post job cleanup.

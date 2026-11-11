@@ -1,0 +1,9 @@
+# Web service
+fastapi==0.162.4
+uvicorn==0.54.0
+pydantic==2.14.3
+# Used by collect/fetch_failed_logs.py to call the GitHub API
+requests==2.34.2
+# Testing (httpx is needed by FastAPI's TestClient)
+pytest==9.2.0
+httpx==0.28.1

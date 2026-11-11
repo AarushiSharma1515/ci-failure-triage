@@ -1,0 +1,23 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run mvn -B package
+[INFO] Scanning for projects...
+[INFO]
+[INFO] --------------------< com.example:inventory >---------------------
+[INFO] Building inventory 0.3.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] --- maven-compiler-plugin:3.13.0:compile (default-compile) @ inventory ---
+[INFO] Compiling 14 source files with javac [debug target 17] to target/classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR :
+[INFO] -------------------------------------------------------------
+[ERROR] /home/runner/work/inventory/inventory/src/main/java/com/example/StockService.java:[23,15] cannot find symbol
+  symbol:   class StockRepo
+  location: class com.example.StockService
+[ERROR] /home/runner/work/inventory/inventory/src/main/java/com/example/StockService.java:[31,9] ';' expected
+[INFO] 2 errors
+[INFO] -------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  6.214 s
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project inventory: Compilation failure
+##[error]Process completed with exit code 1.
