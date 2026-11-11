@@ -1,0 +1,23 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run actions/setup-node@v4
+Found in cache @ /opt/hostedtoolcache/node/20.11.1/x64
+##[endgroup]
+##[group]Run npm ci
+npm ERR! code ERESOLVE
+npm ERR! ERESOLVE unable to resolve dependency tree
+npm ERR!
+npm ERR! While resolving: example-web@1.4.0
+npm ERR! Found: react@18.3.1
+npm ERR! node_modules/react
+npm ERR!   react@"^18.3.1" from the root project
+npm ERR!
+npm ERR! Could not resolve dependency:
+npm ERR! peer react@"^17.0.0" from example-date-picker@2.1.0
+npm ERR! node_modules/example-date-picker
+npm ERR!   example-date-picker@"^2.1.0" from the root project
+npm ERR!
+npm ERR! Fix the upstream dependency conflict, or retry
+npm ERR! this command with --force or --legacy-peer-deps
+npm ERR!
+npm ERR! A complete log of this run can be found in: /home/runner/.npm/_logs/debug-0.log
+##[error]Process completed with exit code 1.

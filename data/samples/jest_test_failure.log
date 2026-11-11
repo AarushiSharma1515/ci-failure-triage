@@ -1,0 +1,29 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run npm test -- --ci
+> example-web@1.4.0 test
+> jest --ci
+
+PASS src/utils/format.test.ts
+PASS src/components/Header.test.tsx
+FAIL src/components/PriceTag.test.tsx
+  ● PriceTag › shows the sale price
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "$9.99"
+    Received: "$10.99"
+
+      12 |     render(<PriceTag price={10.99} sale={9.99} />);
+      13 |     const el = screen.getByTestId("price");
+    > 14 |     expect(el.textContent).toBe("$9.99");
+         |                            ^
+      15 |   });
+
+      at Object.<anonymous> (src/components/PriceTag.test.tsx:14:28)
+
+Test Suites: 1 failed, 2 passed, 3 total
+Tests:       1 failed, 17 passed, 18 total
+Snapshots:   0 total
+Time:        3.412 s
+Ran all test suites.
+##[error]Process completed with exit code 1.

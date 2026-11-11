@@ -1,0 +1,16 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run actions/setup-python@v5
+Successfully set up CPython (3.12.5)
+##[endgroup]
+##[group]Run pip install black==24.10.0
+Successfully installed black-24.10.0 click-8.1.7 mypy-extensions-1.0.0 pathspec-0.12.1
+##[endgroup]
+##[group]Run black --check .
+would reformat /home/runner/work/example-app/example-app/src/example_app/routes.py
+would reformat /home/runner/work/example-app/example-app/tests/test_models.py
+
+Oh no! 💥 💔 💥
+2 files would be reformatted, 31 files would be left unchanged.
+##[error]Process completed with exit code 1.
+##[endgroup]
+Post job cleanup.

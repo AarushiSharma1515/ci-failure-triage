@@ -1,0 +1,24 @@
+SYNTHETIC SAMPLE - hand-written for demo/tests, not a real log
+##[group]Run pytest -q tests/integration
+============================= test session starts ==============================
+platform linux -- Python 3.12.5, pytest-9.2.0, pluggy-1.6.0
+collected 6 items
+
+tests/integration/test_orders_db.py EEEEEE                               [100%]
+
+==================================== ERRORS ====================================
+______________ ERROR at setup of test_create_order_persists_row ______________
+
+    @pytest.fixture
+    def db():
+>       conn = psycopg.connect("postgresql://ci:ci@localhost:5432/orders_test")
+
+E   psycopg.OperationalError: connection failed: connection to server at "127.0.0.1", port 5432 failed: Connection refused
+E       Is the server running on that host and accepting TCP/IP connections?
+
+tests/integration/conftest.py:11: OperationalError
+=========================== short test summary info ============================
+ERROR tests/integration/test_orders_db.py::test_create_order_persists_row - psycopg.OperationalError
+ERROR tests/integration/test_orders_db.py::test_cancel_order_updates_status - psycopg.OperationalError
+============================== 6 errors in 0.41s ===============================
+##[error]Process completed with exit code 1.

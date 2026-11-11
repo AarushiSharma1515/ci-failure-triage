@@ -1,0 +1,21 @@
+{
+  "_comment": "SYNTHETIC samples for the demo and unit tests only. NOT evaluation data. 'name' is the file name without .log.",
+  "samples": [
+    {"name": "pip_install_failure", "expected_category": "dependency_install", "note": "pip cannot find a pinned version"},
+    {"name": "npm_install_failure", "expected_category": "dependency_install", "note": "npm peer dependency conflict (ERESOLVE)"},
+    {"name": "pytest_assertion_failure", "expected_category": "test_failure", "note": "one pytest assertion fails"},
+    {"name": "jest_test_failure", "expected_category": "test_failure", "note": "one Jest expectation fails"},
+    {"name": "typescript_compile_error", "expected_category": "compile_build_error", "note": "tsc type errors"},
+    {"name": "java_maven_compile_error", "expected_category": "compile_build_error", "note": "javac 'cannot find symbol' via Maven"},
+    {"name": "flake8_lint_failure", "expected_category": "lint_format", "note": "flake8 style codes"},
+    {"name": "black_format_failure", "expected_category": "lint_format", "note": "black --check would reformat files"},
+    {"name": "eslint_failure", "expected_category": "lint_format", "note": "eslint problems summary"},
+    {"name": "job_timeout", "expected_category": "timeout_flaky", "note": "job hit the maximum execution time"},
+    {"name": "network_dns_failure", "expected_category": "network_infra", "note": "curl cannot resolve a host"},
+    {"name": "docker_registry_timeout", "expected_category": "network_infra", "note": "docker registry lookup i/o timeout"},
+    {"name": "github_token_permission_denied", "expected_category": "config_permissions", "note": "403 Resource not accessible by integration"},
+    {"name": "missing_secret_env_var", "expected_category": "config_permissions", "note": "script not executable, then a missing env var"},
+    {"name": "ambiguous_generic_exit", "expected_category": "unknown", "note": "AMBIGUOUS: only a generic make/exit-code error, no specific cause"},
+    {"name": "ambiguous_test_db_connection", "expected_category": "network_infra", "note": "AMBIGUOUS: tests error out, but the root cause is 'Connection refused' to the database; a human could also call this test_failure or config_permissions (missing service container)"}
+  ]
+}
