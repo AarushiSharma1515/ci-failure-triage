@@ -54,3 +54,25 @@ def test_find_interesting_lines_merges_overlaps_and_caps_total():
 
 def test_find_interesting_lines_empty_when_no_errors():
     assert find_interesting_lines(clean_log("all good\nstill good")) == []
+
+
+def test_github_timestamps_are_removed_so_anchored_rules_still_work():
+    raw = (
+        "﻿2026-11-13T10:00:00.1234567Z ##[group]Run pytest\n"
+        "2026-11-13T10:00:05.0000000Z FAILED tests/test_a.py::test_x - assert 1 == 2\n"
+    )
+    assert clean_log(raw) == [
+        (1, "##[group]Run pytest"),
+        (2, "FAILED tests/test_a.py::test_x - assert 1 == 2"),
+        (3, ""),
+    ]
+
+
+def test_timestamps_in_the_middle_of_a_line_are_kept():
+    assert clean_log("built at 2026-11-13T10:00:00Z ok") == [(1, "built at 2026-11-13T10:00:00Z ok")]
+
+
+def test_prepare_lines_has_no_size_limit():
+    from triage.clean import prepare_lines
+    lines = prepare_lines("x\n" * (MAX_LOG_BYTES // 2 + 10))  # bigger than the limit
+    assert len(lines) > MAX_LOG_BYTES // 2
