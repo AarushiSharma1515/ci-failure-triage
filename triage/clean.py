@@ -13,6 +13,10 @@ MAX_LOG_BYTES = 200 * 1024
 # Pattern: ESC "[" then optional numbers/semicolons/"?", then one final letter-like byte.
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
+# GitHub Actions job logs start every line with a timestamp, e.g.
+# "2026-11-13T10:00:00.1234567Z ". We remove it so rules anchored with "^" still match.
+TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z ?", re.MULTILINE)
+
 # Words that usually appear on or near the line where something went wrong.
 # Used only to pick "interesting" lines to show; it does NOT decide the category.
 ERROR_HINT_RE = re.compile(
@@ -53,19 +57,32 @@ def normalise_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def strip_timestamps(text: str) -> str:
+    # Also drop a leading byte-order mark ("﻿"), which GitHub log files often start with.
+    return TIMESTAMP_RE.sub("", text.lstrip("﻿"))
+
+
 def split_lines(text: str) -> list[tuple[int, str]]:
     """Return [(line_number, line_text), ...] with line numbers starting at 1."""
     return [(i, line) for i, line in enumerate(text.split("\n"), start=1)]
 
 
+def prepare_lines(text: str) -> list[tuple[int, str]]:
+    """Clean and number the lines WITHOUT the size/text checks.
+
+    Used where big logs are allowed (e.g. the offline eval and labelling tool).
+    """
+    return split_lines(strip_timestamps(normalise_newlines(strip_ansi(text))))
+
+
 def clean_log(text: str) -> list[tuple[int, str]]:
-    """Run every cleaning step and return numbered lines.
+    """Check the input, then clean it. This is what the API uses.
 
     Raises LogTooLargeError or LogNotTextError for bad input.
     """
     check_size(text)
     check_is_text(text)
-    return split_lines(normalise_newlines(strip_ansi(text)))
+    return prepare_lines(text)
 
 
 def find_interesting_lines(
