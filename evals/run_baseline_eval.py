@@ -1,20 +1,23 @@
 """Evaluate the rule-based classifier against hand-labelled logs.
 
 Usage (from the project root):
-    python evals/run_baseline_eval.py                 # uses data/labels/labels.csv
-    python evals/run_baseline_eval.py --labels other.csv
+    python evals/run_baseline_eval.py                # dev split (the default)
+    python evals/run_baseline_eval.py --split test   # held-out test split: look rarely!
+    python evals/run_baseline_eval.py --split all    # every labelled log, ignoring the split
 
-labels.csv format (see data/labels/README.md):
-    log_file,true_category
-    data/raw/owner__repo/123456/build/3_Run tests.txt,test_failure
+Inputs:
+    data/labels/labels.csv   log_file,true_category,...   (the labels; single source of truth)
+    data/labels/split.csv    log_file,true_category,split (which files are dev / test)
 
-Prints overall accuracy, per-category precision/recall, and a confusion matrix.
-It never invents labels: if the file is missing it explains how to create it.
+Prints overall accuracy, per-category precision/recall, and a confusion matrix, and
+writes the same plus the misclassified files to evals/results/baseline_<split>.md.
+It never invents labels: if the labels file is missing it explains how to create it.
 """
 
 import argparse
 import csv
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -26,28 +29,40 @@ from triage.rules import classify  # noqa: E402
 from triage.sections import extract_failed_section  # noqa: E402
 
 DEFAULT_LABELS = PROJECT_ROOT / "data" / "labels" / "labels.csv"
+DEFAULT_SPLIT_FILE = PROJECT_ROOT / "data" / "labels" / "split.csv"
+DEFAULT_RESULTS_DIR = PROJECT_ROOT / "evals" / "results"
+
+TEST_REMINDER = (
+    "REMINDER: this is the held-out TEST set. Do not change or tune the rules based on\n"
+    "these results; use --split dev for that. Otherwise the test score stops being honest."
+)
 
 # This is an f-string, so the category list is filled in now. "{{path}}" becomes
 # "{path}", which is filled in later with .format(path=...).
 HOW_TO_CREATE = f"""No labels file found at: {{path}}
 
 To create one:
-  1. Collect real logs (see collect/fetch_failed_logs.py); they land in data/raw/.
-  2. Read each log yourself and decide its category. Valid categories:
-       {", ".join(CATEGORY_NAMES)}
-  3. Write data/labels/labels.csv with a header row and one row per log:
-       log_file,true_category
-       data/raw/owner__repo/123456/build/3_Run tests.txt,test_failure
-     (log_file is relative to the project root.)
+  1. Collect real logs:   python collect/fetch_failed_logs.py owner/repo --limit 5
+  2. Label them yourself: python tools/label.py
+     Valid categories: {", ".join(CATEGORY_NAMES)}
+  3. Make the dev/test split: python evals/make_split.py
   4. Run this script again.
 
-See data/labels/README.md for the labelling guidelines.
-The synthetic files in data/samples/ are NOT evaluation data; do not label them here."""
+See data/labels/README.md and data/labels/LABELING_GUIDE.md.
+The synthetic files in data/samples/ are NOT evaluation data; do not label them."""
+
+
+def display_path(path: Path) -> str:
+    """Show paths relative to the project when possible (keeps reports free of local folder names)."""
+    try:
+        return path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError:
+        return path.name
 
 
 def load_labels(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
     """Return ([(log_file, true_category), ...], [problems...])."""
-    rows, problems = [], []
+    by_file, problems = {}, []
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None or not {"log_file", "true_category"} <= set(reader.fieldnames):
@@ -60,8 +75,16 @@ def load_labels(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
             elif not (PROJECT_ROOT / log_file).is_file():
                 problems.append(f"row {i}: file not found '{log_file}'")
             else:
-                rows.append((log_file, category))
-    return rows, problems
+                if log_file in by_file:
+                    problems.append(f"row {i}: '{log_file}' labelled twice, using the later label")
+                by_file[log_file] = category
+    return list(by_file.items()), problems
+
+
+def load_split(path: Path) -> dict[str, str]:
+    """Return {log_file: "dev" or "test"} from split.csv."""
+    with path.open(newline="", encoding="utf-8") as f:
+        return {row["log_file"]: row["split"] for row in csv.DictReader(f)}
 
 
 def predict(log_file: str) -> tuple[str, bool]:
@@ -103,6 +126,7 @@ def compute_metrics(pairs: list[tuple[str, str]]) -> dict:
     correct_total = sum(confusion[c][c] for c in CATEGORY_NAMES)
     return {
         "accuracy": correct_total / len(pairs) if pairs else None,
+        "correct": correct_total,
         "per_category": per_category,
         "confusion": confusion,
     }
@@ -128,40 +152,111 @@ def print_report(metrics: dict, n: int) -> None:
         print(f"{t:<22}" + "".join(f"{metrics['confusion'][t][p]:>8}" for p in CATEGORY_NAMES))
 
 
+def write_markdown(path: Path, split: str, metrics: dict, results: list[dict], notes: list[str]) -> None:
+    """Write the report as a Markdown file (tables render nicely on GitHub)."""
+    n = len(results)
+    out = [f"# Baseline evaluation: rule-based classifier, `{split}` split", ""]
+    out.append(f"Generated {datetime.now(timezone.utc).isoformat(timespec='seconds')} "
+               "by `evals/run_baseline_eval.py`.")
+    out.append("")
+    if split == "test":
+        out += ["> **Held-out test set.** Do not tune the rules based on these results.", ""]
+    out.append(f"- Labelled logs evaluated: **{n}**")
+    for note in notes:
+        out.append(f"- {note}")
+    out.append("")
+
+    out += ["## Overall", "", f"Accuracy: **{fmt(metrics['accuracy'])}** ({metrics['correct']} / {n})", ""]
+
+    out += ["## Per category", "", "| category | precision | recall | support |", "|---|---|---|---|"]
+    for c, m in metrics["per_category"].items():
+        out.append(f"| {c} | {fmt(m['precision']).strip()} | {fmt(m['recall']).strip()} | {m['support']} |")
+    out.append("")
+
+    out += ["## Confusion matrix", "", "Rows = true category, columns = predicted.", ""]
+    out.append("| true \\ predicted | " + " | ".join(CATEGORY_NAMES) + " |")
+    out.append("|---" * (len(CATEGORY_NAMES) + 1) + "|")
+    for t in CATEGORY_NAMES:
+        out.append(f"| **{t}** | " + " | ".join(str(metrics["confusion"][t][p]) for p in CATEGORY_NAMES) + " |")
+    out.append("")
+
+    wrong = [r for r in results if r["true"] != r["predicted"]]
+    out += ["## Misclassified files", ""]
+    if wrong:
+        out += ["| log_file | true | predicted |", "|---|---|---|"]
+        out += [f"| `{r['log_file']}` | {r['true']} | {r['predicted']} |" for r in wrong]
+    else:
+        out.append("None.")
+    out.append("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate the rule-based baseline on labelled logs.")
+    parser.add_argument("--split", choices=["dev", "test", "all"], default="dev")
     parser.add_argument("--labels", type=Path, default=DEFAULT_LABELS)
+    parser.add_argument("--split-file", type=Path, default=DEFAULT_SPLIT_FILE)
+    parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     args = parser.parse_args(argv)
 
+    if args.split == "test":
+        print(TEST_REMINDER + "\n")
     if not args.labels.exists():
         print(HOW_TO_CREATE.format(path=args.labels))
         return 1
 
     rows, problems = load_labels(args.labels)
-    pairs, section_files, skipped_binary = [], [], 0
+    notes = [f"Labels: `{display_path(args.labels)}`"]
+
+    if args.split != "all":
+        if not args.split_file.exists():
+            print(f"No split file at {args.split_file}.\n"
+                  "Make one with: python evals/make_split.py   (or use --split all)")
+            return 1
+        membership = load_split(args.split_file)
+        not_in_split = [f for f, _ in rows if f not in membership]
+        rows = [(f, c) for f, c in rows if membership.get(f) == args.split]
+        notes.append(f"Split file: `{display_path(args.split_file)}`")
+        if not_in_split:
+            problems.append(f"{len(not_in_split)} labelled log(s) are not in the split file "
+                            "(labelled after the split was made), so they were left out")
+
+    results, skipped_binary = [], 0
     for log_file, true_category in rows:
         try:
             predicted, used_section = predict(log_file)
         except LogNotTextError:
             skipped_binary += 1  # binary data: we report it rather than guess
             continue
-        pairs.append((true_category, predicted))
-        if used_section:
-            section_files.append(log_file)
+        results.append({"log_file": log_file, "true": true_category,
+                        "predicted": predicted, "used_section": used_section})
 
+    if skipped_binary:
+        problems.append(f"{skipped_binary} log(s) contain binary data and were skipped")
+    section_files = [r["log_file"] for r in results if r["used_section"]]
     for p in problems:
         print(f"Skipped {p}")
-    if skipped_binary:
-        print(f"Skipped {skipped_binary} log(s) that contain binary data.")
     if section_files:
         print(f"Note: {len(section_files)} log(s) were over 200 KB, so only their failed-step section was triaged:")
         for name in section_files:
             print(f"  {name}")
-    if not pairs:
-        print("No usable labelled logs, so there is nothing to evaluate.")
+    if not results:
+        print(f"No usable labelled logs in the '{args.split}' split, so there is nothing to evaluate.")
         return 1
 
-    print_report(compute_metrics(pairs), len(pairs))
+    metrics = compute_metrics([(r["true"], r["predicted"]) for r in results])
+    print_report(metrics, len(results))
+
+    notes += [f"Skipped: {p}" for p in problems]
+    notes += [f"Over 200 KB, failed-step section triaged: `{name}`" for name in section_files]
+    report = args.results_dir / f"baseline_{args.split}.md"
+    write_markdown(report, args.split, metrics, results, notes)
+    print(f"\nResults written to {display_path(report)}")
+
+    if args.split == "test":
+        print("\n" + TEST_REMINDER)
     return 0
 
 
