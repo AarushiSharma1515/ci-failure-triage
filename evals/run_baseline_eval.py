@@ -21,8 +21,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))  # so "import triage" works when run as a script
 
 from triage.categories import CATEGORY_NAMES  # noqa: E402
-from triage.clean import LogNotTextError, LogTooLargeError, clean_log  # noqa: E402
+from triage.clean import MAX_LOG_BYTES, LogNotTextError, check_is_text, prepare_lines  # noqa: E402
 from triage.rules import classify  # noqa: E402
+from triage.sections import extract_failed_section  # noqa: E402
 
 DEFAULT_LABELS = PROJECT_ROOT / "data" / "labels" / "labels.csv"
 
@@ -63,9 +64,20 @@ def load_labels(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
     return rows, problems
 
 
-def predict(log_file: str) -> str:
+def predict(log_file: str) -> tuple[str, bool]:
+    """Return (predicted_category, used_section).
+
+    The API refuses logs over 200 KB, and a user would then paste just the failing
+    step. To mimic that, logs over the limit are triaged on their failed-step
+    section only (used_section=True). Raises LogNotTextError for binary files.
+    """
     text = (PROJECT_ROOT / log_file).read_text(encoding="utf-8", errors="replace")
-    return classify(clean_log(text))["category"]
+    check_is_text(text)
+    lines = prepare_lines(text)
+    if len(text.encode("utf-8")) > MAX_LOG_BYTES:
+        section, _ = extract_failed_section(lines)
+        return classify(section)["category"], True
+    return classify(lines)["category"], False
 
 
 def compute_metrics(pairs: list[tuple[str, str]]) -> dict:
@@ -126,17 +138,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     rows, problems = load_labels(args.labels)
-    pairs, skipped_large = [], 0
+    pairs, section_files, skipped_binary = [], [], 0
     for log_file, true_category in rows:
         try:
-            pairs.append((true_category, predict(log_file)))
-        except (LogTooLargeError, LogNotTextError):
-            skipped_large += 1  # the service would reject these too, so we report them, not guess
+            predicted, used_section = predict(log_file)
+        except LogNotTextError:
+            skipped_binary += 1  # binary data: we report it rather than guess
+            continue
+        pairs.append((true_category, predicted))
+        if used_section:
+            section_files.append(log_file)
 
     for p in problems:
         print(f"Skipped {p}")
-    if skipped_large:
-        print(f"Skipped {skipped_large} log(s) that are over 200 KB or not text.")
+    if skipped_binary:
+        print(f"Skipped {skipped_binary} log(s) that contain binary data.")
+    if section_files:
+        print(f"Note: {len(section_files)} log(s) were over 200 KB, so only their failed-step section was triaged:")
+        for name in section_files:
+            print(f"  {name}")
     if not pairs:
         print("No usable labelled logs, so there is nothing to evaluate.")
         return 1
