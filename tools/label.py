@@ -11,6 +11,9 @@ For each unlabelled log it shows the failed-step section (with line numbers) and
 Every answer is appended to data/labels/labels.csv straight away, so you can quit at
 any time and the next run continues with the logs you have not labelled yet.
 
+If a log's error signature (triage/signature.py) matches a log you already labelled or
+skipped, it says "LIKELY DUPLICATE of ..." at the top. You still decide what to do.
+
 On purpose, this tool does NOT run or show the rule-based classifier: seeing its guess
 would bias your label and make the evaluation meaningless.
 """
@@ -27,6 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so "import triage" works when run as a 
 from triage.categories import CATEGORIES, CATEGORY_NAMES  # noqa: E402
 from triage.clean import prepare_lines  # noqa: E402
 from triage.sections import extract_failed_section  # noqa: E402
+from triage.signature import log_signature  # noqa: E402
 
 DEFAULT_RAW = PROJECT_ROOT / "data" / "raw"
 DEFAULT_LABELS = PROJECT_ROOT / "data" / "labels" / "labels.csv"
@@ -49,14 +53,15 @@ def find_logs(raw_dir: Path) -> list[Path]:
     return sorted(p for p in raw_dir.rglob("*.log") if not p.name.endswith(".failed_step.log"))
 
 
-def read_labelled(labels_csv: Path) -> set[str]:
+def read_labelled(labels_csv: Path) -> dict[str, str]:
+    """{log_file: true_category} for every log labelled so far."""
     if not labels_csv.exists():
-        return set()
+        return {}
     with labels_csv.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames != LABEL_FIELDS:
             sys.exit(f"ERROR: {labels_csv} must have the header: {','.join(LABEL_FIELDS)}")
-        return {row["log_file"] for row in reader}
+        return {row["log_file"]: row["true_category"] for row in reader}
 
 
 def read_skipped(skipped_file: Path) -> set[str]:
@@ -84,6 +89,30 @@ def append_skipped(skipped_file: Path, log_file: str) -> None:
     skipped_file.parent.mkdir(parents=True, exist_ok=True)
     with skipped_file.open("a", encoding="utf-8") as f:
         f.write(log_file + "\n")
+
+
+def file_signature(path: Path) -> str:
+    """Error signature of a saved log ("" if the file is missing or has no error line)."""
+    if not path.exists():
+        return ""
+    return log_signature(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def build_signature_index(labelled: dict[str, str], skipped: set[str], root: Path) -> dict[str, tuple[str, str]]:
+    """{signature: (log_file, "labelled <category>" or "skipped")} for logs already decided.
+
+    Labelled logs go in first, so if a signature belongs to both, the labelled one is shown.
+    """
+    index = {}
+    for log_file, category in labelled.items():
+        signature = file_signature(root / log_file)
+        if signature:
+            index.setdefault(signature, (log_file, f"labelled {category}"))
+    for log_file in sorted(skipped):
+        signature = file_signature(root / log_file)
+        if signature:
+            index.setdefault(signature, (log_file, "skipped"))
+    return index
 
 
 def show_log(path: Path, print_fn=print, full: bool = False) -> None:
@@ -116,11 +145,17 @@ def show_categories(print_fn=print) -> None:
 def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_fn=print) -> int:
     """Ask for a label for each path. Returns how many logs were labelled."""
     labelled = 0
-    for index, path in enumerate(paths, start=1):
+    seen = build_signature_index(read_labelled(labels_csv), read_skipped(skipped_file), root)
+    for number, path in enumerate(paths, start=1):
         log_file = relative_name(path, root)
+        signature = file_signature(path)
         print_fn("\n" + "=" * 78)
-        print_fn(f"Log {index} of {len(paths)}: {log_file}")
+        print_fn(f"Log {number} of {len(paths)}: {log_file}")
         print_fn("=" * 78)
+        match = seen.get(signature) if signature else None
+        if match and match[0] != log_file:   # (with --retry-skipped a log could match itself)
+            print_fn(f"LIKELY DUPLICATE of {match[0]} ({match[1]}). You still decide.")
+            print_fn(f"  signature: {signature}")
         show_log(path, print_fn)
         show_categories(print_fn)
 
@@ -134,6 +169,8 @@ def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_f
                 return labelled
             if choice == "s":
                 append_skipped(skipped_file, log_file)
+                if signature:
+                    seen.setdefault(signature, (log_file, "skipped"))
                 break
             if choice == "m":
                 show_log(path, print_fn, full=True)
@@ -146,6 +183,8 @@ def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_f
                 except (EOFError, KeyboardInterrupt):
                     note = ""
                 append_label(labels_csv, log_file, category, note)
+                if signature:
+                    seen.setdefault(signature, (log_file, f"labelled {category}"))
                 labelled += 1
                 print_fn(f"Saved: {category}")
                 break
@@ -166,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     # Log lines can contain characters the Windows console cannot print; replace them instead of crashing.
     sys.stdout.reconfigure(errors="replace")
 
-    done = read_labelled(args.labels)
+    done = set(read_labelled(args.labels))   # the log_file names (dict keys)
     if not args.retry_skipped:
         done |= read_skipped(args.skipped)
     todo = [p for p in find_logs(args.raw) if relative_name(p, PROJECT_ROOT) not in done]

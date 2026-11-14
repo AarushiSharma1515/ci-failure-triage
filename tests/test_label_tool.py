@@ -48,7 +48,7 @@ def test_label_skip_quit_and_resume(tmp_path):
     assert rows[0]["labeled_at"]
 
     assert lab.read_skipped(skipped) == {"data/raw/o__r/2_20.log"}
-    done = lab.read_labelled(labels) | lab.read_skipped(skipped)
+    done = set(lab.read_labelled(labels)) | lab.read_skipped(skipped)
     remaining = [lab.relative_name(p, tmp_path) for p in lab.find_logs(raw)
                  if lab.relative_name(p, tmp_path) not in done]
     assert remaining == ["data/raw/o__r/3_30.log"]   # resuming continues with the next one
@@ -76,3 +76,46 @@ def test_label_tool_never_uses_the_classifier():
     source = Path(lab.__file__).read_text(encoding="utf-8")
     assert "triage.rules" not in source
     assert "classify" not in source
+
+
+# ---------- LIKELY DUPLICATE ----------
+
+def run_session(tmp_path, paths, answers):
+    out = []
+    lab.label_session(paths, tmp_path / "data" / "labels" / "labels.csv",
+                      tmp_path / "data" / "labels" / "skipped.txt", tmp_path,
+                      input_fn=fake_input(answers), print_fn=out.append)
+    return out
+
+
+def duplicate_lines(out):
+    return [line for line in out if line.startswith("LIKELY DUPLICATE")]
+
+
+def test_duplicate_of_a_log_labelled_in_this_session(tmp_path):
+    raw = make_raw(tmp_path)          # three logs with the same error line
+    out = run_session(tmp_path, lab.find_logs(raw), ["2", "", "s", "q"])
+    assert duplicate_lines(out) == [
+        "LIKELY DUPLICATE of data/raw/o__r/1_10.log (labelled test_failure). You still decide.",   # log 2
+        "LIKELY DUPLICATE of data/raw/o__r/1_10.log (labelled test_failure). You still decide.",   # log 3
+    ]
+
+
+def test_duplicate_of_a_log_skipped_in_an_earlier_session(tmp_path):
+    raw = make_raw(tmp_path)
+    skipped = tmp_path / "data" / "labels" / "skipped.txt"
+    skipped.parent.mkdir(parents=True)
+    skipped.write_text("data/raw/o__r/1_10.log\n", encoding="utf-8")
+    out = run_session(tmp_path, lab.find_logs(raw)[1:], ["q"])
+    assert duplicate_lines(out) == ["LIKELY DUPLICATE of data/raw/o__r/1_10.log (skipped). You still decide."]
+
+
+def test_no_duplicate_warning_for_different_errors_or_itself(tmp_path):
+    raw = make_raw(tmp_path)
+    (raw / "o__r" / "2_20.log").write_text("##[group]Run x\nE   KeyError: 'a'\n", encoding="utf-8")
+    skipped = tmp_path / "data" / "labels" / "skipped.txt"
+    skipped.parent.mkdir(parents=True)
+    skipped.write_text("data/raw/o__r/1_10.log\n", encoding="utf-8")
+    # 1_10 is shown again (as with --retry-skipped): it must not be called a duplicate of itself.
+    out = run_session(tmp_path, lab.find_logs(raw)[:2], ["s", "q"])
+    assert duplicate_lines(out) == []
