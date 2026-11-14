@@ -42,6 +42,7 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so "import triage" works when run as a 
 
 from triage.clean import prepare_lines  # noqa: E402
 from triage.sections import STEP_HEADER_RE, extract_failed_section, section_text  # noqa: E402
+from triage.signature import error_signature, log_signature  # noqa: E402
 
 API = "https://api.github.com"
 # owner: letters, digits, hyphens (GitHub usernames/orgs cannot contain dots).
@@ -57,7 +58,9 @@ SUMMARY_ACTION = "re-actors/alls-green"   # a GitHub Action used by "all jobs pa
 MANIFEST_FIELDS = [
     "repo", "run_id", "url", "date",                                   # about the run
     "job_id", "job_name", "failed_step", "html_url", "size_bytes",     # about the job
+    "error_signature",                                                 # see triage/signature.py
 ]
+V1_MANIFEST_FIELDS = MANIFEST_FIELDS[:-1]   # written by the first version, before error_signature
 
 
 def fail(message: str) -> None:
@@ -181,27 +184,52 @@ def download_job_log(session, repo: str, job_id: int) -> bytes | None:
     return response.content
 
 
-def save_job_log(raw: bytes, lines: list[tuple[int, str]], full_path: Path, section_path: Path) -> bool:
+def save_job_log(raw: bytes, lines: list[tuple[int, str]], full_path: Path, section_path: Path) -> tuple[bool, str]:
     """Save the full log exactly as downloaded, plus the failed-step section.
 
     `lines` is the same log after prepare_lines (computed once by the caller).
-    Returns True if a "##[error]" marker was found (False = section is just the log's tail).
+    Returns (found, error_signature). found is True if a "##[error]" marker was found
+    (False = the section is just the log's tail).
     """
     full_path.write_bytes(raw)
     section, found = extract_failed_section(lines)
     section_path.write_text(section_text(section), encoding="utf-8", newline="")
-    return found
+    return found, error_signature(section)
 
 
-def read_manifest_job_ids(manifest: Path) -> set[str]:
+def upgrade_manifest(manifest: Path, out: Path, rows: list[dict]) -> None:
+    """Add the error_signature column to a manifest written by the first version.
+
+    The signature is computed from each job's saved log ("" if the log is missing).
+    The new file is written next to the old one first, then swapped in, so an
+    interruption cannot leave a half-written manifest.
+    """
+    for row in rows:
+        log = out / row["repo"].replace("/", "__") / f"{row['run_id']}_{row['job_id']}.log"
+        text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+        row["error_signature"] = log_signature(text)
+    tmp = manifest.with_name(manifest.name + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=MANIFEST_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    tmp.replace(manifest)
+    print(f"Upgraded {manifest.name}: added the error_signature column to {len(rows)} row(s).")
+
+
+def read_manifest_job_ids(manifest: Path, out: Path) -> set[str]:
     if not manifest.exists():
         return set()
     with manifest.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        if reader.fieldnames != MANIFEST_FIELDS:
-            fail(f"{manifest} has unexpected columns (maybe from an older version). "
-                 "Rename or delete it, then run again.")
-        return {row["job_id"] for row in reader}
+        fields = reader.fieldnames
+        rows = list(reader)
+    if fields == V1_MANIFEST_FIELDS:
+        upgrade_manifest(manifest, out, rows)
+    elif fields != MANIFEST_FIELDS:
+        fail(f"{manifest} has unexpected columns (maybe from an older version). "
+             "Rename or delete it, then run again.")
+    return {row["job_id"] for row in rows}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -228,7 +256,7 @@ def main(argv: list[str] | None = None) -> None:
     repo_dir = args.out / args.repo.replace("/", "__")
     repo_dir.mkdir(parents=True, exist_ok=True)
     manifest = args.out / "manifest.csv"
-    known_job_ids = read_manifest_job_ids(manifest)
+    known_job_ids = read_manifest_job_ids(manifest, args.out)
     write_header = not manifest.exists()
 
     saved = 0
@@ -263,7 +291,7 @@ def main(argv: list[str] | None = None) -> None:
                 if is_summary_log(lines):
                     print(f"  skipped (summary job): {name}")
                     continue
-                found = save_job_log(raw, lines, full_path, repo_dir / f"{base}.failed_step.log")
+                found, signature = save_job_log(raw, lines, full_path, repo_dir / f"{base}.failed_step.log")
                 writer.writerow({
                     "repo": args.repo,
                     "run_id": run["id"],
@@ -274,6 +302,7 @@ def main(argv: list[str] | None = None) -> None:
                     "failed_step": first_failed_step(job),
                     "html_url": job.get("html_url", ""),
                     "size_bytes": len(raw),
+                    "error_signature": signature,
                 })
                 f.flush()  # keep the manifest up to date even if the script is stopped
                 saved += 1

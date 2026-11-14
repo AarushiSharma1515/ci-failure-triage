@@ -310,3 +310,30 @@ def test_max_per_run_must_be_positive(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         f.main(["o/r", "--max-per-run", "0"])
     assert "--max-per-run must be at least 1" in capsys.readouterr().err
+
+
+# ---------- error_signature column ----------
+
+def test_manifest_stores_error_signature(fake_session, tmp_path):
+    f.main(["o/r", "--out", str(tmp_path)])
+    row = read_manifest(tmp_path)[0]
+    assert row["error_signature"] == "failed <path>::test_x - assert <n> == <n>"
+
+
+def test_v1_manifest_is_upgraded_not_refused(fake_session, tmp_path, capsys):
+    # A manifest from the first version (no error_signature column) for an already saved job.
+    (tmp_path / "o__r").mkdir()
+    (tmp_path / "o__r" / "111_2.log").write_bytes(JOB_LOG)
+    with (tmp_path / "manifest.csv").open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(f.V1_MANIFEST_FIELDS)
+        writer.writerow(["o/r", "111", "u", "d", "2", "test", "Run tests", "h", str(len(JOB_LOG))])
+
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert "Upgraded manifest.csv" in capsys.readouterr().out
+    rows = read_manifest(tmp_path)
+    assert list(rows[0].keys()) == f.MANIFEST_FIELDS
+    assert rows[0]["job_id"] == "2"
+    assert rows[0]["error_signature"] == "failed <path>::test_x - assert <n> == <n>"
+    assert [r["job_id"] for r in rows] == ["2", "3"]   # job 2 not downloaded again; job 3 added
+    assert not (tmp_path / "manifest.csv.tmp").exists()
