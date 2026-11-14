@@ -119,3 +119,63 @@ def test_no_duplicate_warning_for_different_errors_or_itself(tmp_path):
     # 1_10 is shown again (as with --retry-skipped): it must not be called a duplicate of itself.
     out = run_session(tmp_path, lab.find_logs(raw)[:2], ["s", "q"])
     assert duplicate_lines(out) == []
+
+
+# ---------- KEY LINES ----------
+
+PYTEST_LOG = """##[group]Run pytest -q
+UserWarning: Failed to load optional plugin
+==================================== ERRORS ====================================
+_____________________ ERROR collecting tests/test_ufunc.py _____________________
+E   ImportError: pyarrow>=16.0.0 is required
+=============================== warnings summary ===============================
+  cacheprovider.py:487: PytestCacheWarning: could not create cache path: [Errno 2] Permission denied: '/w/.pytest_cache'
+  plugin.py:12: UserWarning: Failed to load optional plugin
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/test_ufunc.py
+##[error]Process completed with exit code 1.
+"""
+
+
+def numbers(section_lines):
+    return [n for n, _ in section_lines]
+
+
+def test_key_lines_skip_the_warnings_summary_block():
+    section = list(enumerate(PYTEST_LOG.splitlines(), start=1))
+    keys = lab.key_lines(section)
+    texts = [t for _, t in keys]
+    # Line 2 is the same "Failed" warning OUTSIDE the block: it is kept.
+    # Lines 7-8 are inside "warnings summary": excluded, including the Permission denied one.
+    assert numbers(keys) == [2, 3, 4, 5, 11, 12]
+    assert not any("Permission denied" in t for t in texts)
+    assert "ERROR tests/test_ufunc.py" in texts   # the block ended at the next pytest header
+
+
+def test_key_lines_match_each_pattern():
+    lines = ["ok", "FAILED t.py::x", "ERROR t.py", "E   assert 1 == 2", "make: *** error: boom",
+             "Error: thing", "  error[unpinned-uses]: unpinned", "Failed to build", "fatal: no ref",
+             "##[error]bad", "all good", "0 failed, 3 passed"]
+    keys = lab.key_lines(list(enumerate(lines, start=1)))
+    assert numbers(keys) == [2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+
+def test_key_lines_block_is_shown_first_with_line_numbers(tmp_path):
+    log = tmp_path / "a.log"
+    log.write_text(PYTEST_LOG, encoding="utf-8")
+    out = []
+    lab.show_log(log, out.append)
+    key_block = out[:out.index("Showing the failed step (plus 50 lines before it):")]
+    assert key_block[0].startswith("KEY LINES")
+    assert "     5 | E   ImportError: pyarrow>=16.0.0 is required" in key_block
+
+
+def test_key_lines_shows_at_most_15(tmp_path):
+    log = tmp_path / "a.log"
+    log.write_text("##[group]Run pytest\n" + "".join(f"FAILED t.py::test_{i}\n" for i in range(20)), encoding="utf-8")
+    out = []
+    lab.show_log(log, out.append)
+    key_block = out[:out.index("")]
+    assert sum(1 for line in key_block if "| FAILED" in line) == 15
+    assert "   ... and 5 more in the section below" in key_block

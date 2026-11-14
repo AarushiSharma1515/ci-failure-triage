@@ -20,6 +20,7 @@ would bias your label and make the evaluation meaningless.
 
 import argparse
 import csv
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,13 @@ DEFAULT_SKIPPED = PROJECT_ROOT / "data" / "labels" / "skipped.txt"
 LABEL_FIELDS = ["log_file", "true_category", "notes", "labeled_at"]
 SHOW_HEAD = 30    # long sections: show the first 30 lines...
 SHOW_TAIL = 120   # ...and the last 120 lines (where the error usually is)
+MAX_KEY_LINES = 15
+
+# Lines that usually point at the cause. "error" may be followed by a code, as in
+# zizmor's "error[unpinned-uses]:"; (?i:...) makes only that part case-insensitive.
+KEY_LINE_RE = re.compile(r"FAILED|ERROR|^E   |(?i:error)(\[[^\]]*\])?:|Failed|fatal:|##\[error\]")
+# pytest section headers look like "===== warnings summary =====".
+PYTEST_HEADER_RE = re.compile(r"^={3,} .+ ={3,}$")
 
 
 def relative_name(path: Path, root: Path) -> str:
@@ -115,17 +123,43 @@ def build_signature_index(labelled: dict[str, str], skipped: set[str], root: Pat
     return index
 
 
+def key_lines(section: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Section lines matching KEY_LINE_RE, except those inside pytest's "warnings summary".
+
+    Warnings never fail a job (see LABELING_GUIDE.md), but they often contain scary words
+    such as "Permission denied". The warnings block ends at the next pytest header.
+    """
+    found = []
+    in_warnings = False
+    for number, text in section:
+        if PYTEST_HEADER_RE.match(text):
+            in_warnings = "warnings summary" in text
+        if not in_warnings and KEY_LINE_RE.search(text):
+            found.append((number, text))
+    return found
+
+
 def show_log(path: Path, print_fn=print, full: bool = False) -> None:
     text = path.read_text(encoding="utf-8", errors="replace")
     section, found = extract_failed_section(prepare_lines(text))
-    if found:
-        print_fn("Showing the failed step (plus 50 lines before it):")
-    else:
-        print_fn("No ##[error] marker found; showing the last lines of the log:")
 
     def show(lines):
         for number, line in lines:
             print_fn(f"{number:>6} | {line}")
+
+    keys = key_lines(section)
+    print_fn("KEY LINES (lines that look like errors; pytest warnings summary ignored):")
+    show(keys[:MAX_KEY_LINES])
+    if not keys:
+        print_fn("   (none found)")
+    elif len(keys) > MAX_KEY_LINES:
+        print_fn(f"   ... and {len(keys) - MAX_KEY_LINES} more in the section below")
+    print_fn("")
+
+    if found:
+        print_fn("Showing the failed step (plus 50 lines before it):")
+    else:
+        print_fn("No ##[error] marker found; showing the last lines of the log:")
 
     if full or len(section) <= SHOW_HEAD + SHOW_TAIL:
         show(section)
