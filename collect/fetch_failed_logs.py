@@ -2,7 +2,7 @@
 
 Usage (from the project root):
     # bash:        export GITHUB_TOKEN=...      PowerShell:  $env:GITHUB_TOKEN = "..."
-    python collect/fetch_failed_logs.py owner/repo --limit 5
+    python collect/fetch_failed_logs.py owner/repo --limit 5 --max-per-run 1
 
 What it does:
   1. Lists the most recent workflow runs with status "failure".
@@ -15,6 +15,9 @@ What it does:
 
 Summary jobs (e.g. "check", "alls-green") are skipped: they only report that ANOTHER
 job failed, so they have no root cause of their own. They don't count towards --limit.
+
+Only the first --max-per-run failed jobs of each run are saved (default 1), because jobs
+of one run (e.g. the same tests on Linux, Windows, macOS) usually fail for the same reason.
 
 Rules for using the output:
   - Only collect logs from PUBLIC repositories.
@@ -205,6 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Download logs of failed GitHub Actions jobs.")
     parser.add_argument("repo", help="public repository as owner/name, e.g. octo-org/example")
     parser.add_argument("--limit", type=int, default=5, help="max number of NEW job logs (default 5)")
+    parser.add_argument("--max-per-run", type=int, default=1,
+                        help="max failed jobs saved per workflow run (default 1)")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="output folder (default data/raw)")
     return parser
 
@@ -216,6 +221,8 @@ def main(argv: list[str] | None = None) -> None:
         fail("Repository must look like owner/name, e.g. octo-org/example.")
     if args.limit < 1:
         fail("--limit must be at least 1.")
+    if args.max_per_run < 1:
+        fail("--max-per-run must be at least 1.")
 
     session = make_session(get_token())
     repo_dir = args.out / args.repo.replace("/", "__")
@@ -231,6 +238,7 @@ def main(argv: list[str] | None = None) -> None:
             writer.writeheader()
 
         for run in iter_failed_runs(session, args.repo):
+            kept_in_run = 0   # jobs of this run that are saved (now, or in an earlier session)
             for job in failed_jobs(session, args.repo, run["id"]):
                 if saved >= args.limit:
                     break
@@ -238,10 +246,14 @@ def main(argv: list[str] | None = None) -> None:
                 if is_summary_job_name(name):
                     print(f"  skipped (summary job): {name}")
                     continue
+                if kept_in_run >= args.max_per_run:
+                    print(f"  skipped (max-per-run): {name}")
+                    continue
                 base = f"{run['id']}_{job['id']}"
                 full_path = repo_dir / f"{base}.log"
                 if full_path.exists() or str(job["id"]) in known_job_ids:
                     print(f"  job {job['id']}: already downloaded, skipping")
+                    kept_in_run += 1
                     continue
 
                 raw = download_job_log(session, args.repo, job["id"])
@@ -265,6 +277,7 @@ def main(argv: list[str] | None = None) -> None:
                 })
                 f.flush()  # keep the manifest up to date even if the script is stopped
                 saved += 1
+                kept_in_run += 1
                 note = "" if found else " (no ##[error] marker: section is the last lines)"
                 print(f"  job {job['id']} ({name}): saved {full_path.name}{note}")
             if saved >= args.limit:

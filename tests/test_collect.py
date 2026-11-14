@@ -261,3 +261,52 @@ def test_is_summary_log():
                        "##[group]Run re-actors/alls-green@v1.3.0", "##[error]failed")
     assert not f.is_summary_log(lines_of(earlier))
     assert not f.is_summary_log(lines_of(JOB_LOG))
+
+
+# ---------- --max-per-run ----------
+
+MATRIX_JOBS = {
+    111: [failed_job(1, "test (ubuntu)"), failed_job(2, "test (windows)"), failed_job(3, "test (macos)")],
+    222: [failed_job(4, "build")],
+}
+
+
+def test_default_max_per_run_is_1():
+    assert f.build_parser().parse_args(["o/r"]).max_per_run == 1
+
+
+def test_only_first_job_of_each_run_saved_by_default(monkeypatch, tmp_path, capsys):
+    session = use_fake(monkeypatch, jobs=MATRIX_JOBS)
+    f.main(["o/r", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "skipped (max-per-run): test (windows)" in out
+    assert "skipped (max-per-run): test (macos)" in out
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test (ubuntu)", "build"]
+    assert not any("/jobs/2/logs" in u for u in session.calls)   # never downloaded
+
+
+def test_max_per_run_2(monkeypatch, tmp_path):
+    use_fake(monkeypatch, jobs=MATRIX_JOBS)
+    f.main(["o/r", "--out", str(tmp_path), "--max-per-run", "2"])
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test (ubuntu)", "test (windows)", "build"]
+
+
+def test_summary_job_does_not_use_up_max_per_run(monkeypatch, tmp_path):
+    use_fake(monkeypatch, jobs={111: [failed_job(1, "check"), failed_job(2, "test")]})
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test"]
+
+
+def test_already_downloaded_job_counts_towards_max_per_run(monkeypatch, tmp_path):
+    # Session 1 saves job 1 of run 111. Session 2 must not add job 2 of the same run.
+    use_fake(monkeypatch, jobs=MATRIX_JOBS)
+    f.main(["o/r", "--out", str(tmp_path), "--limit", "1"])
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test (ubuntu)", "build"]
+
+
+def test_max_per_run_must_be_positive(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    with pytest.raises(SystemExit):
+        f.main(["o/r", "--max-per-run", "0"])
+    assert "--max-per-run must be at least 1" in capsys.readouterr().err
