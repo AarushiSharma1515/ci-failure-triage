@@ -34,24 +34,38 @@ class FakeResponse:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
-def fake_github(job_log_status=200):
-    """Two failed runs: run 111 has one passing and one failing job; run 222 has one failing job."""
+DEFAULT_JOBS = {
+    # Two failed runs: run 111 has one passing and one failing job; run 222 has one failing job.
+    111: [
+        {"id": 1, "name": "lint", "conclusion": "success", "steps": []},
+        {"id": 2, "name": "test", "conclusion": "failure", "html_url": "https://github.com/o/r/job/2",
+         "steps": [{"name": "Set up job", "conclusion": "success"},
+                   {"name": "Run tests", "conclusion": "failure"}]},
+    ],
+    222: [
+        {"id": 3, "name": "build", "conclusion": "failure", "html_url": "https://github.com/o/r/job/3",
+         "steps": [{"name": "Compile", "conclusion": "failure"}]},
+    ],
+}
+
+
+def failed_job(job_id, name):
+    return {"id": job_id, "name": name, "conclusion": "failure", "steps": []}
+
+
+def make_log(*lines):
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def fake_github(job_log_status=200, jobs=None, logs=None):
+    """A fake GitHub API. jobs = {run_id: [job, ...]}; logs = {job_id: bytes} (default JOB_LOG)."""
+    jobs = jobs or DEFAULT_JOBS
+    logs = logs or {}
     runs_page_1 = {"workflow_runs": [
-        {"id": 111, "html_url": "https://github.com/o/r/actions/runs/111", "created_at": "2026-11-01T00:00:00Z"},
-        {"id": 222, "html_url": "https://github.com/o/r/actions/runs/222", "created_at": "2026-11-02T00:00:00Z"},
+        {"id": run_id, "html_url": f"https://github.com/o/r/actions/runs/{run_id}",
+         "created_at": "2026-11-01T00:00:00Z"}
+        for run_id in jobs
     ]}
-    jobs = {
-        111: {"jobs": [
-            {"id": 1, "name": "lint", "conclusion": "success", "steps": []},
-            {"id": 2, "name": "test", "conclusion": "failure", "html_url": "https://github.com/o/r/job/2",
-             "steps": [{"name": "Set up job", "conclusion": "success"},
-                       {"name": "Run tests", "conclusion": "failure"}]},
-        ]},
-        222: {"jobs": [
-            {"id": 3, "name": "build", "conclusion": "failure", "html_url": "https://github.com/o/r/job/3",
-             "steps": [{"name": "Compile", "conclusion": "failure"}]},
-        ]},
-    }
 
     class FakeSession:
         def __init__(self):
@@ -63,9 +77,10 @@ def fake_github(job_log_status=200):
                 return FakeResponse(json_data=runs_page_1 if params["page"] == 1 else {"workflow_runs": []})
             if url.endswith("/jobs"):
                 run_id = int(url.split("/runs/")[1].split("/")[0])
-                return FakeResponse(json_data=jobs[run_id])
+                return FakeResponse(json_data={"jobs": jobs[run_id]})
             if url.endswith("/logs"):
-                return FakeResponse(status_code=job_log_status, content=JOB_LOG)
+                job_id = int(url.split("/jobs/")[1].split("/")[0])
+                return FakeResponse(status_code=job_log_status, content=logs.get(job_id, JOB_LOG))
             raise AssertionError(f"unexpected URL {url}")
 
     return FakeSession()
@@ -83,6 +98,14 @@ def no_network(monkeypatch):
 def fake_session(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     session = fake_github()
+    monkeypatch.setattr(f, "make_session", lambda token: session)
+    return session
+
+
+def use_fake(monkeypatch, **kwargs):
+    """Install a fake GitHub built from kwargs (see fake_github) and return it."""
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    session = fake_github(**kwargs)
     monkeypatch.setattr(f, "make_session", lambda token: session)
     return session
 
@@ -176,3 +199,65 @@ def test_token_is_never_printed(fake_session, tmp_path, capsys):
     f.main(["o/r", "--out", str(tmp_path)])
     captured = capsys.readouterr()
     assert TOKEN not in captured.out and TOKEN not in captured.err
+
+
+# ---------- summary / aggregator jobs ----------
+
+ALLS_GREEN_LOG = make_log(
+    "Complete job name: all-good",
+    "##[group]Run re-actors/alls-green@v1.3.0",
+    "##[group]Run python -m normalize_needed_jobs_status \\",   # inner step of the composite action
+    "Some of the required to succeed jobs failed",
+    "##[error]Process completed with exit code 1.",
+)
+
+
+def test_summary_jobs_skipped_by_name_and_not_counted(monkeypatch, tmp_path, capsys):
+    session = use_fake(monkeypatch, jobs={
+        111: [failed_job(1, "check"), failed_job(2, "pre-commit-alls-green"), failed_job(3, "test")],
+        222: [failed_job(4, "build")],
+    })
+    f.main(["o/r", "--out", str(tmp_path), "--limit", "2"])
+    out = capsys.readouterr().out
+    assert "skipped (summary job): check" in out
+    assert "skipped (summary job): pre-commit-alls-green" in out
+    # name-based skips happen before downloading
+    assert not any("/jobs/1/logs" in u or "/jobs/2/logs" in u for u in session.calls)
+    # the two summary jobs did not use up --limit 2: both real jobs were saved
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test", "build"]
+
+
+def test_name_check_is_exact():
+    assert f.is_summary_job_name("check")
+    assert not f.is_summary_job_name("check-docs")      # only exactly "check"
+    assert f.is_summary_job_name("Alls-Green")
+
+
+def test_summary_job_detected_from_its_log(monkeypatch, tmp_path, capsys):
+    use_fake(monkeypatch, jobs={111: [failed_job(1, "all-good"), failed_job(2, "test")]},
+             logs={1: ALLS_GREEN_LOG})
+    f.main(["o/r", "--out", str(tmp_path), "--limit", "1"])
+    assert "skipped (summary job): all-good" in capsys.readouterr().out
+    assert not (tmp_path / "o__r" / "111_1.log").exists()
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test"]
+
+
+def lines_of(log_bytes):
+    return f.prepare_lines(log_bytes.decode("utf-8"))
+
+
+def test_is_summary_log():
+    assert f.is_summary_log(lines_of(ALLS_GREEN_LOG))
+    # A linter quoting a workflow file mentions alls-green, but is a real failure.
+    zizmor = make_log(
+        "##[group]Run zizmor .github/workflows",
+        "  error[unpinned-uses]: unpinned action reference",
+        "  126 |         uses: re-actors/alls-green@v1.3.0",
+        "##[error]Process completed with exit code 14.",
+    )
+    assert not f.is_summary_log(lines_of(zizmor))
+    # Another step failed BEFORE the alls-green step: that failure is real.
+    earlier = make_log("##[group]Run pytest", "##[error]Process completed with exit code 1.",
+                       "##[group]Run re-actors/alls-green@v1.3.0", "##[error]failed")
+    assert not f.is_summary_log(lines_of(earlier))
+    assert not f.is_summary_log(lines_of(JOB_LOG))

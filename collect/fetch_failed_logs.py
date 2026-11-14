@@ -13,6 +13,9 @@ What it does:
   4. Appends one row per job to data/raw/manifest.csv.
   5. Stops after --limit NEW job logs. Jobs already downloaded are skipped.
 
+Summary jobs (e.g. "check", "alls-green") are skipped: they only report that ANOTHER
+job failed, so they have no root cause of their own. They don't count towards --limit.
+
 Rules for using the output:
   - Only collect logs from PUBLIC repositories.
   - data/raw/ is git-ignored: never commit raw logs.
@@ -35,7 +38,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))  # so "import triage" works when run as a script
 
 from triage.clean import prepare_lines  # noqa: E402
-from triage.sections import extract_failed_section, section_text  # noqa: E402
+from triage.sections import STEP_HEADER_RE, extract_failed_section, section_text  # noqa: E402
 
 API = "https://api.github.com"
 # owner: letters, digits, hyphens (GitHub usernames/orgs cannot contain dots).
@@ -47,6 +50,7 @@ TIMEOUT_SECONDS = 30
 RUNS_PER_PAGE = 20
 MAX_RUN_PAGES = 10                 # look at most 200 failed runs back in history
 FAILED_CONCLUSIONS = {"failure", "timed_out"}
+SUMMARY_ACTION = "re-actors/alls-green"   # a GitHub Action used by "all jobs passed?" summary jobs
 MANIFEST_FIELDS = [
     "repo", "run_id", "url", "date",                                   # about the run
     "job_id", "job_name", "failed_step", "html_url", "size_bytes",     # about the job
@@ -140,6 +144,29 @@ def first_failed_step(job: dict) -> str:
     return ""
 
 
+def is_summary_job_name(name: str) -> bool:
+    """Summary/aggregator jobs, recognised by name (checked BEFORE downloading the log)."""
+    return name == "check" or "alls-green" in name.lower()
+
+
+def is_summary_log(lines: list[tuple[int, str]]) -> bool:
+    """True if the log's only failure comes from the re-actors/alls-green summary action.
+
+    alls-green is a "composite" action: its error appears under an inner step, not under
+    its own header. So we check that the alls-green step started BEFORE the first
+    "##[error]" line, i.e. no earlier step failed. We look for the step header
+    ("##[group]Run re-actors/alls-green@..."), not just the text, because linters such as
+    zizmor quote "uses: re-actors/alls-green@..." from workflow files in their output.
+    """
+    summary_started = False
+    for _, text in lines:
+        if STEP_HEADER_RE.match(text) and SUMMARY_ACTION in text:
+            summary_started = True
+        elif "##[error]" in text:
+            return summary_started   # the first error: is it inside the summary step?
+    return False
+
+
 def download_job_log(session, repo: str, job_id: int) -> bytes | None:
     # GitHub answers with a redirect to a short-lived URL for the plain-text log;
     # requests follows it and drops the Authorization header when the host changes.
@@ -151,14 +178,14 @@ def download_job_log(session, repo: str, job_id: int) -> bytes | None:
     return response.content
 
 
-def save_job_log(raw: bytes, full_path: Path, section_path: Path) -> bool:
+def save_job_log(raw: bytes, lines: list[tuple[int, str]], full_path: Path, section_path: Path) -> bool:
     """Save the full log exactly as downloaded, plus the failed-step section.
 
+    `lines` is the same log after prepare_lines (computed once by the caller).
     Returns True if a "##[error]" marker was found (False = section is just the log's tail).
     """
     full_path.write_bytes(raw)
-    text = raw.decode("utf-8", errors="replace")
-    section, found = extract_failed_section(prepare_lines(text))
+    section, found = extract_failed_section(lines)
     section_path.write_text(section_text(section), encoding="utf-8", newline="")
     return found
 
@@ -207,6 +234,10 @@ def main(argv: list[str] | None = None) -> None:
             for job in failed_jobs(session, args.repo, run["id"]):
                 if saved >= args.limit:
                     break
+                name = job.get("name", "")
+                if is_summary_job_name(name):
+                    print(f"  skipped (summary job): {name}")
+                    continue
                 base = f"{run['id']}_{job['id']}"
                 full_path = repo_dir / f"{base}.log"
                 if full_path.exists() or str(job["id"]) in known_job_ids:
@@ -216,14 +247,18 @@ def main(argv: list[str] | None = None) -> None:
                 raw = download_job_log(session, args.repo, job["id"])
                 if raw is None:
                     continue
-                found = save_job_log(raw, full_path, repo_dir / f"{base}.failed_step.log")
+                lines = prepare_lines(raw.decode("utf-8", errors="replace"))
+                if is_summary_log(lines):
+                    print(f"  skipped (summary job): {name}")
+                    continue
+                found = save_job_log(raw, lines, full_path, repo_dir / f"{base}.failed_step.log")
                 writer.writerow({
                     "repo": args.repo,
                     "run_id": run["id"],
                     "url": run.get("html_url", ""),
                     "date": run.get("created_at", ""),
                     "job_id": job["id"],
-                    "job_name": job.get("name", ""),
+                    "job_name": name,
                     "failed_step": first_failed_step(job),
                     "html_url": job.get("html_url", ""),
                     "size_bytes": len(raw),
@@ -231,7 +266,7 @@ def main(argv: list[str] | None = None) -> None:
                 f.flush()  # keep the manifest up to date even if the script is stopped
                 saved += 1
                 note = "" if found else " (no ##[error] marker: section is the last lines)"
-                print(f"  job {job['id']} ({job.get('name', '')}): saved {full_path.name}{note}")
+                print(f"  job {job['id']} ({name}): saved {full_path.name}{note}")
             if saved >= args.limit:
                 break
 
