@@ -22,6 +22,7 @@ import argparse
 import csv
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -176,9 +177,20 @@ def show_categories(print_fn=print) -> None:
         print_fn(f"  {i}. {name:<20} {CATEGORIES[name]['description']}")
 
 
+def print_summary(per_category: Counter, skipped: int, labels_csv: Path, remaining: int, print_fn=print) -> None:
+    """What happened in this session, plus overall progress."""
+    detail = ", ".join(f"{c} {per_category[c]}" for c in CATEGORY_NAMES if per_category[c])
+    print_fn("\nSession summary")
+    print_fn(f"  labelled this session: {sum(per_category.values())}" + (f"  ({detail})" if detail else ""))
+    print_fn(f"  skipped this session:  {skipped}")
+    print_fn(f"  labelled in total:     {len(read_labelled(labels_csv))}  (all sessions)")
+    print_fn(f"  logs remaining:        {remaining}")
+
+
 def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_fn=print) -> int:
     """Ask for a label for each path. Returns how many logs were labelled."""
-    labelled = 0
+    per_category = Counter()   # labels given in this session, per category
+    skipped = 0
     seen = build_signature_index(read_labelled(labels_csv), read_skipped(skipped_file), root)
     for number, path in enumerate(paths, start=1):
         log_file = relative_name(path, root)
@@ -199,12 +211,15 @@ def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_f
             except (EOFError, KeyboardInterrupt):
                 choice = "q"
             if choice == "q":
-                print_fn(f"Stopped. Labelled {labelled} log(s) this session; progress is saved.")
-                return labelled
+                print_fn("Stopped. Progress is saved.")
+                done = sum(per_category.values()) + skipped
+                print_summary(per_category, skipped, labels_csv, len(paths) - done, print_fn)
+                return sum(per_category.values())
             if choice == "s":
                 append_skipped(skipped_file, log_file)
                 if signature:
                     seen.setdefault(signature, (log_file, "skipped"))
+                skipped += 1
                 break
             if choice == "m":
                 show_log(path, print_fn, full=True)
@@ -219,13 +234,14 @@ def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_f
                 append_label(labels_csv, log_file, category, note)
                 if signature:
                     seen.setdefault(signature, (log_file, f"labelled {category}"))
-                labelled += 1
+                per_category[category] += 1
                 print_fn(f"Saved: {category}")
                 break
             print_fn("Please type a number from 1 to 8, or m, s or q.")
 
-    print_fn(f"\nNo more unlabelled logs. Labelled {labelled} log(s) this session.")
-    return labelled
+    print_fn("\nNo more unlabelled logs.")
+    print_summary(per_category, skipped, labels_csv, 0, print_fn)
+    return sum(per_category.values())
 
 
 def main(argv: list[str] | None = None) -> int:

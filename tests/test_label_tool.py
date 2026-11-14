@@ -179,3 +179,38 @@ def test_key_lines_shows_at_most_15(tmp_path):
     key_block = out[:out.index("")]
     assert sum(1 for line in key_block if "| FAILED" in line) == 15
     assert "   ... and 5 more in the section below" in key_block
+
+
+# ---------- session summary ----------
+
+def summary_of(out):
+    return out[out.index("\nSession summary"):]
+
+
+def test_summary_when_quitting(tmp_path):
+    raw = make_raw(tmp_path)
+    for name in ["4_40", "5_50"]:
+        (raw / "o__r" / f"{name}.log").write_text(LOG, encoding="utf-8")
+    labels = tmp_path / "data" / "labels" / "labels.csv"
+    lab.append_label(labels, "data/raw/o__r/old.log", "lint_format", "")   # from an earlier session
+
+    # Five logs: test_failure, skip, network_infra, test_failure, then quit with one left.
+    out = run_session(tmp_path, lab.find_logs(raw), ["2", "", "s", "6", "", "2", "", "q"])
+    assert summary_of(out) == [
+        "\nSession summary",
+        "  labelled this session: 3  (test_failure 2, network_infra 1)",
+        "  skipped this session:  1",
+        "  labelled in total:     4  (all sessions)",
+        "  logs remaining:        1",
+    ]
+
+
+def test_summary_when_finished(tmp_path):
+    out = run_session(tmp_path, lab.find_logs(make_raw(tmp_path)), ["s", "s", "8", ""])
+    assert "No more unlabelled logs." in "".join(out)
+    assert summary_of(out)[1:] == [
+        "  labelled this session: 1  (unknown 1)",
+        "  skipped this session:  2",
+        "  labelled in total:     1  (all sessions)",
+        "  logs remaining:        0",
+    ]
