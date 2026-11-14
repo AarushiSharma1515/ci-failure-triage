@@ -1,6 +1,7 @@
 # Labels
 
-This folder holds **hand-made labels** for real CI logs. No labels have been created yet.
+This folder holds **hand-made labels** for real CI logs. First batch: 25 logs reviewed,
+9 labelled, 16 skipped (summary jobs and near-duplicates). No dev/test split has been made yet.
 
 | file                | made by                     | purpose                                         |
 |---------------------|-----------------------------|-------------------------------------------------|

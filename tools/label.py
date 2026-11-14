@@ -11,13 +11,18 @@ For each unlabelled log it shows the failed-step section (with line numbers) and
 Every answer is appended to data/labels/labels.csv straight away, so you can quit at
 any time and the next run continues with the logs you have not labelled yet.
 
+If a log's error signature (triage/signature.py) matches a log you already labelled or
+skipped, it says "LIKELY DUPLICATE of ..." at the top. You still decide what to do.
+
 On purpose, this tool does NOT run or show the rule-based classifier: seeing its guess
 would bias your label and make the evaluation meaningless.
 """
 
 import argparse
 import csv
+import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))  # so "import triage" works when run as a 
 from triage.categories import CATEGORIES, CATEGORY_NAMES  # noqa: E402
 from triage.clean import prepare_lines  # noqa: E402
 from triage.sections import extract_failed_section  # noqa: E402
+from triage.signature import log_signature  # noqa: E402
 
 DEFAULT_RAW = PROJECT_ROOT / "data" / "raw"
 DEFAULT_LABELS = PROJECT_ROOT / "data" / "labels" / "labels.csv"
@@ -34,6 +40,13 @@ DEFAULT_SKIPPED = PROJECT_ROOT / "data" / "labels" / "skipped.txt"
 LABEL_FIELDS = ["log_file", "true_category", "notes", "labeled_at"]
 SHOW_HEAD = 30    # long sections: show the first 30 lines...
 SHOW_TAIL = 120   # ...and the last 120 lines (where the error usually is)
+MAX_KEY_LINES = 15
+
+# Lines that usually point at the cause. "error" may be followed by a code, as in
+# zizmor's "error[unpinned-uses]:"; (?i:...) makes only that part case-insensitive.
+KEY_LINE_RE = re.compile(r"FAILED|ERROR|^E   |(?i:error)(\[[^\]]*\])?:|Failed|fatal:|##\[error\]")
+# pytest section headers look like "===== warnings summary =====".
+PYTEST_HEADER_RE = re.compile(r"^={3,} .+ ={3,}$")
 
 
 def relative_name(path: Path, root: Path) -> str:
@@ -49,14 +62,15 @@ def find_logs(raw_dir: Path) -> list[Path]:
     return sorted(p for p in raw_dir.rglob("*.log") if not p.name.endswith(".failed_step.log"))
 
 
-def read_labelled(labels_csv: Path) -> set[str]:
+def read_labelled(labels_csv: Path) -> dict[str, str]:
+    """{log_file: true_category} for every log labelled so far."""
     if not labels_csv.exists():
-        return set()
+        return {}
     with labels_csv.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames != LABEL_FIELDS:
             sys.exit(f"ERROR: {labels_csv} must have the header: {','.join(LABEL_FIELDS)}")
-        return {row["log_file"] for row in reader}
+        return {row["log_file"]: row["true_category"] for row in reader}
 
 
 def read_skipped(skipped_file: Path) -> set[str]:
@@ -86,17 +100,67 @@ def append_skipped(skipped_file: Path, log_file: str) -> None:
         f.write(log_file + "\n")
 
 
+def file_signature(path: Path) -> str:
+    """Error signature of a saved log ("" if the file is missing or has no error line)."""
+    if not path.exists():
+        return ""
+    return log_signature(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def build_signature_index(labelled: dict[str, str], skipped: set[str], root: Path) -> dict[str, tuple[str, str]]:
+    """{signature: (log_file, "labelled <category>" or "skipped")} for logs already decided.
+
+    Labelled logs go in first, so if a signature belongs to both, the labelled one is shown.
+    """
+    index = {}
+    for log_file, category in labelled.items():
+        signature = file_signature(root / log_file)
+        if signature:
+            index.setdefault(signature, (log_file, f"labelled {category}"))
+    for log_file in sorted(skipped):
+        signature = file_signature(root / log_file)
+        if signature:
+            index.setdefault(signature, (log_file, "skipped"))
+    return index
+
+
+def key_lines(section: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Section lines matching KEY_LINE_RE, except those inside pytest's "warnings summary".
+
+    Warnings never fail a job (see LABELING_GUIDE.md), but they often contain scary words
+    such as "Permission denied". The warnings block ends at the next pytest header.
+    """
+    found = []
+    in_warnings = False
+    for number, text in section:
+        if PYTEST_HEADER_RE.match(text):
+            in_warnings = "warnings summary" in text
+        if not in_warnings and KEY_LINE_RE.search(text):
+            found.append((number, text))
+    return found
+
+
 def show_log(path: Path, print_fn=print, full: bool = False) -> None:
     text = path.read_text(encoding="utf-8", errors="replace")
     section, found = extract_failed_section(prepare_lines(text))
-    if found:
-        print_fn("Showing the failed step (plus 50 lines before it):")
-    else:
-        print_fn("No ##[error] marker found; showing the last lines of the log:")
 
     def show(lines):
         for number, line in lines:
             print_fn(f"{number:>6} | {line}")
+
+    keys = key_lines(section)
+    print_fn("KEY LINES (lines that look like errors; pytest warnings summary ignored):")
+    show(keys[:MAX_KEY_LINES])
+    if not keys:
+        print_fn("   (none found)")
+    elif len(keys) > MAX_KEY_LINES:
+        print_fn(f"   ... and {len(keys) - MAX_KEY_LINES} more in the section below")
+    print_fn("")
+
+    if found:
+        print_fn("Showing the failed step (plus 50 lines before it):")
+    else:
+        print_fn("No ##[error] marker found; showing the last lines of the log:")
 
     if full or len(section) <= SHOW_HEAD + SHOW_TAIL:
         show(section)
@@ -113,14 +177,31 @@ def show_categories(print_fn=print) -> None:
         print_fn(f"  {i}. {name:<20} {CATEGORIES[name]['description']}")
 
 
+def print_summary(per_category: Counter, skipped: int, labels_csv: Path, remaining: int, print_fn=print) -> None:
+    """What happened in this session, plus overall progress."""
+    detail = ", ".join(f"{c} {per_category[c]}" for c in CATEGORY_NAMES if per_category[c])
+    print_fn("\nSession summary")
+    print_fn(f"  labelled this session: {sum(per_category.values())}" + (f"  ({detail})" if detail else ""))
+    print_fn(f"  skipped this session:  {skipped}")
+    print_fn(f"  labelled in total:     {len(read_labelled(labels_csv))}  (all sessions)")
+    print_fn(f"  logs remaining:        {remaining}")
+
+
 def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_fn=print) -> int:
     """Ask for a label for each path. Returns how many logs were labelled."""
-    labelled = 0
-    for index, path in enumerate(paths, start=1):
+    per_category = Counter()   # labels given in this session, per category
+    skipped = 0
+    seen = build_signature_index(read_labelled(labels_csv), read_skipped(skipped_file), root)
+    for number, path in enumerate(paths, start=1):
         log_file = relative_name(path, root)
+        signature = file_signature(path)
         print_fn("\n" + "=" * 78)
-        print_fn(f"Log {index} of {len(paths)}: {log_file}")
+        print_fn(f"Log {number} of {len(paths)}: {log_file}")
         print_fn("=" * 78)
+        match = seen.get(signature) if signature else None
+        if match and match[0] != log_file:   # (with --retry-skipped a log could match itself)
+            print_fn(f"LIKELY DUPLICATE of {match[0]} ({match[1]}). You still decide.")
+            print_fn(f"  signature: {signature}")
         show_log(path, print_fn)
         show_categories(print_fn)
 
@@ -130,10 +211,15 @@ def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_f
             except (EOFError, KeyboardInterrupt):
                 choice = "q"
             if choice == "q":
-                print_fn(f"Stopped. Labelled {labelled} log(s) this session; progress is saved.")
-                return labelled
+                print_fn("Stopped. Progress is saved.")
+                done = sum(per_category.values()) + skipped
+                print_summary(per_category, skipped, labels_csv, len(paths) - done, print_fn)
+                return sum(per_category.values())
             if choice == "s":
                 append_skipped(skipped_file, log_file)
+                if signature:
+                    seen.setdefault(signature, (log_file, "skipped"))
+                skipped += 1
                 break
             if choice == "m":
                 show_log(path, print_fn, full=True)
@@ -146,13 +232,16 @@ def label_session(paths, labels_csv, skipped_file, root, input_fn=input, print_f
                 except (EOFError, KeyboardInterrupt):
                     note = ""
                 append_label(labels_csv, log_file, category, note)
-                labelled += 1
+                if signature:
+                    seen.setdefault(signature, (log_file, f"labelled {category}"))
+                per_category[category] += 1
                 print_fn(f"Saved: {category}")
                 break
             print_fn("Please type a number from 1 to 8, or m, s or q.")
 
-    print_fn(f"\nNo more unlabelled logs. Labelled {labelled} log(s) this session.")
-    return labelled
+    print_fn("\nNo more unlabelled logs.")
+    print_summary(per_category, skipped, labels_csv, 0, print_fn)
+    return sum(per_category.values())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     # Log lines can contain characters the Windows console cannot print; replace them instead of crashing.
     sys.stdout.reconfigure(errors="replace")
 
-    done = read_labelled(args.labels)
+    done = set(read_labelled(args.labels))   # the log_file names (dict keys)
     if not args.retry_skipped:
         done |= read_skipped(args.skipped)
     todo = [p for p in find_logs(args.raw) if relative_name(p, PROJECT_ROOT) not in done]

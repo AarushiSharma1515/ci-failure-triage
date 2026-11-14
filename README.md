@@ -9,7 +9,7 @@ _Demo GIF: coming soon._
 
 > **The classifier is rule-based only.** There is no LLM, no machine learning and no API key involved.
 > It is a list of hand-written keyword/regex rules. It has **not been evaluated on real logs yet**:
-> Phase 2 adds the tools to collect and label real logs, but no logs have been labelled so far.
+> Phase 2 adds the tools to collect and label real logs; only a first small batch (9 logs) is labelled so far.
 
 ## What Phase 1 does
 
@@ -33,9 +33,9 @@ _Demo GIF: coming soon._
 
 ## What Phase 2 adds
 
-Phase 2 adds **tools** for building a real evaluation set. The tools exist and are unit-tested
-(with a mocked GitHub API), but **no real logs have been collected or labelled yet**, so there
-are **still no accuracy numbers**. Numbers will only exist after the logs are labelled by hand.
+Phase 2 adds **tools** for building a real evaluation set. The tools are unit-tested (with a
+mocked GitHub API). Labelling has only just started, so there are **still no accuracy numbers**:
+no dev/test split has been made and the evaluation has not been run on real labels.
 
 - **Collector** (`collect/fetch_failed_logs.py`): downloads only the *failed jobs'* logs from
   failed GitHub Actions runs, saves the full job log plus the failed step's section, and records
@@ -43,14 +43,39 @@ are **still no accuracy numbers**. Numbers will only exist after the logs are la
 - **Labelling helper** (`tools/label.py`): shows one log at a time (failed-step section with line
   numbers) and asks for a category 1-8. It deliberately does **not** show the classifier's guess,
   so the labels are not biased by it. Progress is saved after every answer.
-- **Labelling guide** (`data/labels/LABELING_GUIDE.md`): a template of rules for consistent labels,
-  mostly still TODO.
+- **Labelling guide** (`data/labels/LABELING_GUIDE.md`): rules for consistent labels, when to skip,
+  common traps, and the ambiguous cases decided so far.
 - **Dev/test split** (`evals/make_split.py`): a stratified, reproducible ~2/3 dev, ~1/3 test split.
   The test set is meant to stay frozen: rules are tuned on dev only.
 - **Evaluation** (`evals/run_baseline_eval.py --split dev|test|all`): prints and saves a report to
   `evals/results/baseline_<split>.md`, including the misclassified files.
 - **Real-log handling:** GitHub timestamps and byte-order marks are stripped, and logs over 200 KB
   are evaluated on their failed-step section only (the report says which ones).
+
+### First batch: what labelling 25 real logs showed
+
+I reviewed the first 25 failed-job logs (from three public Python projects) by hand:
+**9 labelled, 16 skipped**. The skipped ones were 7 *summary jobs* (jobs such as `check` or
+`alls-green` that only report "another job failed") and 9 *near-duplicates* (one run testing
+the same code on many platforms, all failing for the same reason). So most raw logs were noise
+for an evaluation set: collecting more of them the same way would mostly add duplicates.
+Nine labels are far too few to measure anything, and they are not a representative sample.
+The decisions made while labelling are recorded in `data/labels/LABELING_GUIDE.md`.
+
+### Collector v2: what changed because of that
+
+- **Summary jobs are skipped** (job name `check` or containing `alls-green`, or a log whose only
+  failure is the `re-actors/alls-green` step) and don't count towards `--limit`.
+- **`--max-per-run N`** (default 1): only the first N failed jobs of each run are saved.
+- **Error signature** (`triage/signature.py`): the main error line of the failed step, with
+  numbers, paths, IDs, hex addresses and test parameters replaced by placeholders. It is stored
+  in the manifest (`error_signature` column).
+- **Labelling helper:** warns `LIKELY DUPLICATE of <file>` when a log's signature matches one
+  already labelled or skipped (you still decide), shows a `KEY LINES` block of error-looking
+  lines (ignoring pytest's warnings summary), and prints a summary when you quit.
+
+These are heuristics written from 25 logs; they will miss some duplicates and may flag a few
+logs that only look alike (e.g. two different tests that both fail with `assert 2 == 4`).
 
 ## Run locally
 
@@ -125,12 +150,17 @@ downloads the logs of the **failed jobs** only. For each job it saves:
 - `data/raw/<owner>__<repo>/<run_id>_<job_id>.failed_step.log`: the failed step plus 50 lines before it
 
 and appends a row to `data/raw/manifest.csv`
-(`repo, run_id, url, date, job_id, job_name, failed_step, html_url, size_bytes`).
-`--limit N` (default 5) is the maximum number of *new* job logs; jobs already downloaded are skipped.
+(`repo, run_id, url, date, job_id, job_name, failed_step, html_url, size_bytes, error_signature`).
+A manifest from the first version (without `error_signature`) is upgraded automatically.
+
+- `--limit N` (default 5): maximum number of *new* job logs. Jobs already downloaded are skipped.
+- `--max-per-run N` (default 1): maximum failed jobs saved from one workflow run.
+- Summary jobs are skipped and don't count towards either limit.
+
 It reads a token from the `GITHUB_TOKEN` environment variable (see `.env.example`) and never prints it.
 
 ```bash
-python collect/fetch_failed_logs.py owner/repo --limit 5   # 1. collect
+python collect/fetch_failed_logs.py owner/repo --limit 5 --max-per-run 1   # 1. collect
 python tools/label.py                                     # 2. label by hand (resumable)
 python evals/make_split.py                                # 3. make the dev/test split once
 python evals/run_baseline_eval.py                         # 4. evaluate on dev
@@ -156,7 +186,8 @@ list of misclassified files, to `evals/results/baseline_<split>.md`.
 - `--split test`: the held-out set; it prints a reminder not to tune rules on these results.
 - `--split all`: every labelled log, ignoring the split.
 
-**No labels exist yet**, so there are no results to report. See `data/labels/README.md` for the format.
+**There are no results to report yet:** only 9 logs are labelled and no split has been made.
+See `data/labels/README.md` for the format.
 
 ## Folder map
 
@@ -166,6 +197,7 @@ triage/            core logic (no web code)
   clean.py           ANSI/timestamp stripping, line endings, size limit, interesting lines
   rules.py           data-driven regex rules + classifier + confidence formula
   sections.py        find the failed step's section in a GitHub Actions job log
+  signature.py       normalised "error signature" used to spot near-duplicate logs
   schemas.py         pydantic request/response models
 app/
   main.py            FastAPI app and endpoints
@@ -173,10 +205,10 @@ app/
 collect/
   fetch_failed_logs.py   download failed jobs' logs from GitHub (Phase 2 data)
 tools/
-  label.py           command-line labelling helper (never shows the classifier's guess)
+  label.py           command-line labelling helper (key lines, duplicate hints; never the classifier's guess)
 data/
   samples/           16 SYNTHETIC logs + index.json (demo/tests only)
-  labels/            README, LABELING_GUIDE.md; labels.csv and split.csv will go here
+  labels/            README, LABELING_GUIDE.md, labels.csv, skipped.txt (split.csv once made)
   raw/               downloaded real logs + manifest.csv (git-ignored)
 evals/
   make_split.py          stratified dev/test split (fixed seed, refuses to overwrite)
@@ -190,7 +222,7 @@ Dockerfile, .dockerignore, requirements.txt, .env.example
 ## Roadmap
 
 - **Phase 1 (done):** rule-based baseline, API, demo, tests, CI.
-- **Phase 2 (tools done, labelling not started):** collect and hand-label about 150 real CI logs from
+- **Phase 2 (tools done, labelling started: 9 of ~150):** collect and hand-label about 150 real CI logs from
   public repos, with a held-out test set, then report the rule-based baseline's dev/test results.
 - **Phase 3:** scikit-learn baseline (e.g. TF-IDF + linear model) and an evaluation table comparing it with the rules.
 - **Phase 4:** LLM + retrieval (embeddings over similar past failures), compared against Phases 1 and 3 on the same test set.
