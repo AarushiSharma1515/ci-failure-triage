@@ -34,24 +34,38 @@ class FakeResponse:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
-def fake_github(job_log_status=200):
-    """Two failed runs: run 111 has one passing and one failing job; run 222 has one failing job."""
+DEFAULT_JOBS = {
+    # Two failed runs: run 111 has one passing and one failing job; run 222 has one failing job.
+    111: [
+        {"id": 1, "name": "lint", "conclusion": "success", "steps": []},
+        {"id": 2, "name": "test", "conclusion": "failure", "html_url": "https://github.com/o/r/job/2",
+         "steps": [{"name": "Set up job", "conclusion": "success"},
+                   {"name": "Run tests", "conclusion": "failure"}]},
+    ],
+    222: [
+        {"id": 3, "name": "build", "conclusion": "failure", "html_url": "https://github.com/o/r/job/3",
+         "steps": [{"name": "Compile", "conclusion": "failure"}]},
+    ],
+}
+
+
+def failed_job(job_id, name):
+    return {"id": job_id, "name": name, "conclusion": "failure", "steps": []}
+
+
+def make_log(*lines):
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def fake_github(job_log_status=200, jobs=None, logs=None):
+    """A fake GitHub API. jobs = {run_id: [job, ...]}; logs = {job_id: bytes} (default JOB_LOG)."""
+    jobs = jobs or DEFAULT_JOBS
+    logs = logs or {}
     runs_page_1 = {"workflow_runs": [
-        {"id": 111, "html_url": "https://github.com/o/r/actions/runs/111", "created_at": "2026-11-01T00:00:00Z"},
-        {"id": 222, "html_url": "https://github.com/o/r/actions/runs/222", "created_at": "2026-11-02T00:00:00Z"},
+        {"id": run_id, "html_url": f"https://github.com/o/r/actions/runs/{run_id}",
+         "created_at": "2026-11-01T00:00:00Z"}
+        for run_id in jobs
     ]}
-    jobs = {
-        111: {"jobs": [
-            {"id": 1, "name": "lint", "conclusion": "success", "steps": []},
-            {"id": 2, "name": "test", "conclusion": "failure", "html_url": "https://github.com/o/r/job/2",
-             "steps": [{"name": "Set up job", "conclusion": "success"},
-                       {"name": "Run tests", "conclusion": "failure"}]},
-        ]},
-        222: {"jobs": [
-            {"id": 3, "name": "build", "conclusion": "failure", "html_url": "https://github.com/o/r/job/3",
-             "steps": [{"name": "Compile", "conclusion": "failure"}]},
-        ]},
-    }
 
     class FakeSession:
         def __init__(self):
@@ -63,9 +77,10 @@ def fake_github(job_log_status=200):
                 return FakeResponse(json_data=runs_page_1 if params["page"] == 1 else {"workflow_runs": []})
             if url.endswith("/jobs"):
                 run_id = int(url.split("/runs/")[1].split("/")[0])
-                return FakeResponse(json_data=jobs[run_id])
+                return FakeResponse(json_data={"jobs": jobs[run_id]})
             if url.endswith("/logs"):
-                return FakeResponse(status_code=job_log_status, content=JOB_LOG)
+                job_id = int(url.split("/jobs/")[1].split("/")[0])
+                return FakeResponse(status_code=job_log_status, content=logs.get(job_id, JOB_LOG))
             raise AssertionError(f"unexpected URL {url}")
 
     return FakeSession()
@@ -83,6 +98,14 @@ def no_network(monkeypatch):
 def fake_session(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
     session = fake_github()
+    monkeypatch.setattr(f, "make_session", lambda token: session)
+    return session
+
+
+def use_fake(monkeypatch, **kwargs):
+    """Install a fake GitHub built from kwargs (see fake_github) and return it."""
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    session = fake_github(**kwargs)
     monkeypatch.setattr(f, "make_session", lambda token: session)
     return session
 
@@ -176,3 +199,141 @@ def test_token_is_never_printed(fake_session, tmp_path, capsys):
     f.main(["o/r", "--out", str(tmp_path)])
     captured = capsys.readouterr()
     assert TOKEN not in captured.out and TOKEN not in captured.err
+
+
+# ---------- summary / aggregator jobs ----------
+
+ALLS_GREEN_LOG = make_log(
+    "Complete job name: all-good",
+    "##[group]Run re-actors/alls-green@v1.3.0",
+    "##[group]Run python -m normalize_needed_jobs_status \\",   # inner step of the composite action
+    "Some of the required to succeed jobs failed",
+    "##[error]Process completed with exit code 1.",
+)
+
+
+def test_summary_jobs_skipped_by_name_and_not_counted(monkeypatch, tmp_path, capsys):
+    session = use_fake(monkeypatch, jobs={
+        111: [failed_job(1, "check"), failed_job(2, "pre-commit-alls-green"), failed_job(3, "test")],
+        222: [failed_job(4, "build")],
+    })
+    f.main(["o/r", "--out", str(tmp_path), "--limit", "2"])
+    out = capsys.readouterr().out
+    assert "skipped (summary job): check" in out
+    assert "skipped (summary job): pre-commit-alls-green" in out
+    # name-based skips happen before downloading
+    assert not any("/jobs/1/logs" in u or "/jobs/2/logs" in u for u in session.calls)
+    # the two summary jobs did not use up --limit 2: both real jobs were saved
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test", "build"]
+
+
+def test_name_check_is_exact():
+    assert f.is_summary_job_name("check")
+    assert not f.is_summary_job_name("check-docs")      # only exactly "check"
+    assert f.is_summary_job_name("Alls-Green")
+
+
+def test_summary_job_detected_from_its_log(monkeypatch, tmp_path, capsys):
+    use_fake(monkeypatch, jobs={111: [failed_job(1, "all-good"), failed_job(2, "test")]},
+             logs={1: ALLS_GREEN_LOG})
+    f.main(["o/r", "--out", str(tmp_path), "--limit", "1"])
+    assert "skipped (summary job): all-good" in capsys.readouterr().out
+    assert not (tmp_path / "o__r" / "111_1.log").exists()
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test"]
+
+
+def lines_of(log_bytes):
+    return f.prepare_lines(log_bytes.decode("utf-8"))
+
+
+def test_is_summary_log():
+    assert f.is_summary_log(lines_of(ALLS_GREEN_LOG))
+    # A linter quoting a workflow file mentions alls-green, but is a real failure.
+    zizmor = make_log(
+        "##[group]Run zizmor .github/workflows",
+        "  error[unpinned-uses]: unpinned action reference",
+        "  126 |         uses: re-actors/alls-green@v1.3.0",
+        "##[error]Process completed with exit code 14.",
+    )
+    assert not f.is_summary_log(lines_of(zizmor))
+    # Another step failed BEFORE the alls-green step: that failure is real.
+    earlier = make_log("##[group]Run pytest", "##[error]Process completed with exit code 1.",
+                       "##[group]Run re-actors/alls-green@v1.3.0", "##[error]failed")
+    assert not f.is_summary_log(lines_of(earlier))
+    assert not f.is_summary_log(lines_of(JOB_LOG))
+
+
+# ---------- --max-per-run ----------
+
+MATRIX_JOBS = {
+    111: [failed_job(1, "test (ubuntu)"), failed_job(2, "test (windows)"), failed_job(3, "test (macos)")],
+    222: [failed_job(4, "build")],
+}
+
+
+def test_default_max_per_run_is_1():
+    assert f.build_parser().parse_args(["o/r"]).max_per_run == 1
+
+
+def test_only_first_job_of_each_run_saved_by_default(monkeypatch, tmp_path, capsys):
+    session = use_fake(monkeypatch, jobs=MATRIX_JOBS)
+    f.main(["o/r", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "skipped (max-per-run): test (windows)" in out
+    assert "skipped (max-per-run): test (macos)" in out
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test (ubuntu)", "build"]
+    assert not any("/jobs/2/logs" in u for u in session.calls)   # never downloaded
+
+
+def test_max_per_run_2(monkeypatch, tmp_path):
+    use_fake(monkeypatch, jobs=MATRIX_JOBS)
+    f.main(["o/r", "--out", str(tmp_path), "--max-per-run", "2"])
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test (ubuntu)", "test (windows)", "build"]
+
+
+def test_summary_job_does_not_use_up_max_per_run(monkeypatch, tmp_path):
+    use_fake(monkeypatch, jobs={111: [failed_job(1, "check"), failed_job(2, "test")]})
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test"]
+
+
+def test_already_downloaded_job_counts_towards_max_per_run(monkeypatch, tmp_path):
+    # Session 1 saves job 1 of run 111. Session 2 must not add job 2 of the same run.
+    use_fake(monkeypatch, jobs=MATRIX_JOBS)
+    f.main(["o/r", "--out", str(tmp_path), "--limit", "1"])
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert [row["job_name"] for row in read_manifest(tmp_path)] == ["test (ubuntu)", "build"]
+
+
+def test_max_per_run_must_be_positive(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    with pytest.raises(SystemExit):
+        f.main(["o/r", "--max-per-run", "0"])
+    assert "--max-per-run must be at least 1" in capsys.readouterr().err
+
+
+# ---------- error_signature column ----------
+
+def test_manifest_stores_error_signature(fake_session, tmp_path):
+    f.main(["o/r", "--out", str(tmp_path)])
+    row = read_manifest(tmp_path)[0]
+    assert row["error_signature"] == "failed <path>::test_x - assert <n> == <n>"
+
+
+def test_v1_manifest_is_upgraded_not_refused(fake_session, tmp_path, capsys):
+    # A manifest from the first version (no error_signature column) for an already saved job.
+    (tmp_path / "o__r").mkdir()
+    (tmp_path / "o__r" / "111_2.log").write_bytes(JOB_LOG)
+    with (tmp_path / "manifest.csv").open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(f.V1_MANIFEST_FIELDS)
+        writer.writerow(["o/r", "111", "u", "d", "2", "test", "Run tests", "h", str(len(JOB_LOG))])
+
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert "Upgraded manifest.csv" in capsys.readouterr().out
+    rows = read_manifest(tmp_path)
+    assert list(rows[0].keys()) == f.MANIFEST_FIELDS
+    assert rows[0]["job_id"] == "2"
+    assert rows[0]["error_signature"] == "failed <path>::test_x - assert <n> == <n>"
+    assert [r["job_id"] for r in rows] == ["2", "3"]   # job 2 not downloaded again; job 3 added
+    assert not (tmp_path / "manifest.csv.tmp").exists()

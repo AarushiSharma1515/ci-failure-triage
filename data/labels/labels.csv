@@ -1,0 +1,10 @@
+log_file,true_category,notes,labeled_at
+data/raw/fastapi__fastapi/43418818964_131863376734.log,lint_format,zizmor unpinned-uses (workflow security lint),2026-11-14T06:30:01+00:00
+data/raw/fastapi__fastapi/43472391801_132047361381.log,lint_format,"lint_format: includes spell-checkers (typos, codespell) and pre-commit hooks that fail on a rule, even if the file is docs, not code.",2026-11-14T06:42:52+00:00
+data/raw/fastapi__fastapi/43473873401_132052511860.log,network_infra,"artifact not found (coverage-html), CI plumbing; upstream job probably didn't upload",2026-11-14T06:45:19+00:00
+data/raw/pandas-dev__pandas/43489146359_132105371006.log,test_failure,"ImportError at test collection: test_ufunc.py uses pyarrow at module level, pyarrow not installed; test bug, not install failure",2026-11-14T07:01:07+00:00
+data/raw/pandas-dev__pandas/43497349063_132133826968.log,network_infra,"git fetch failed: PR merge ref not found (PR closed or has conflicts), CI plumbing",2026-11-14T08:02:56+00:00
+data/raw/pandas-dev__pandas/43551818657_132323555225.log,test_failure,pandas-stubs vs nightly: deprecation warning (how='Finish') treated as error,2026-11-14T08:03:47+00:00
+data/raw/pytest-dev__pytest/42777678942_129700092218.log,dependency_install,setup-python: Python 3.11.2 not available on Ubuntu 26.04 runner (runner image upgrade),2026-11-14T08:04:38+00:00
+data/raw/pytest-dev__pytest/43049244070_130621994413.log,test_failure,Windows symlink collection test: AssertionError passed 0 != 1,2026-11-14T08:06:51+00:00
+data/raw/pytest-dev__pytest/43079052021_130726642946.log,test_failure,gc refcount assertion 2 == 4 in test_raises_cyclic_reference (possibly GC-timing flaky),2026-11-14T08:07:37+00:00
