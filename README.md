@@ -189,6 +189,24 @@ list of misclassified files, to `evals/results/baseline_<split>.md`.
 **There are no results to report yet:** only 9 logs are labelled and no split has been made.
 See `data/labels/README.md` for the format.
 
+### Rules vs ML model (Phase 3, code only)
+
+`triage/ml.py` is a small scikit-learn model: it reads the failed step's section of the log,
+normalises it like the duplicate detector (paths, URLs, IDs and numbers become placeholders,
+lines are cut to 1,000 characters), and classifies it with TF-IDF (words + bigrams) and
+logistic regression (`class_weight="balanced"`).
+
+`evals/run_ml_eval.py` scores the model and the rules **on exactly the same logs** and writes
+`evals/results/ml_<split>.md`, listing every log where either one is wrong.
+
+- `--split dev` (default): k-fold stratified cross-validation inside the dev split, so every dev
+  log is predicted by a model that never saw it.
+- `--split test`: one model is trained on all dev logs and predicts each test log once.
+- There is deliberately no `--split all`, because that would mean training on test logs.
+
+**No results yet** for the same reason as above. With ~150 labels the model will still be
+trained on only ~100 logs, so expect its number to move a lot as labels are added.
+
 ## Folder map
 
 ```
@@ -198,6 +216,7 @@ triage/            core logic (no web code)
   rules.py           data-driven regex rules + classifier + confidence formula
   sections.py        find the failed step's section in a GitHub Actions job log
   signature.py       normalised "error signature" used to spot near-duplicate logs
+  ml.py              Phase 3 model: TF-IDF + logistic regression over the failed step
   schemas.py         pydantic request/response models
 app/
   main.py            FastAPI app and endpoints
@@ -213,6 +232,7 @@ data/
 evals/
   make_split.py          stratified dev/test split (fixed seed, refuses to overwrite)
   run_baseline_eval.py   accuracy / precision / recall / confusion matrix, per split
+  run_ml_eval.py         rules vs ML model on the same logs (dev: cross-validated; test: trained on dev)
   results/               Markdown reports written by the eval (created when it runs)
 tests/               pytest tests
 .github/workflows/ci.yml   runs pytest on push and pull request
@@ -224,7 +244,8 @@ Dockerfile, .dockerignore, requirements.txt, .env.example
 - **Phase 1 (done):** rule-based baseline, API, demo, tests, CI.
 - **Phase 2 (tools done, labelling started: 9 of ~150):** collect and hand-label about 150 real CI logs from
   public repos, with a held-out test set, then report the rule-based baseline's dev/test results.
-- **Phase 3:** scikit-learn baseline (e.g. TF-IDF + linear model) and an evaluation table comparing it with the rules.
+- **Phase 3 (code done, waiting for labels):** TF-IDF + logistic regression model and an evaluation
+  script comparing it with the rules on the same logs. Results come once Phase 2's labels and split exist.
 - **Phase 4:** LLM + retrieval (embeddings over similar past failures), compared against Phases 1 and 3 on the same test set.
 - **Phase 5:** LangGraph agent, with the evaluation running in CI.
 
