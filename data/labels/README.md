@@ -1,11 +1,14 @@
 # Labels
 
 This folder holds **hand-made labels** for real CI logs. First batch: 25 logs reviewed,
-9 labelled, 16 skipped (summary jobs and near-duplicates). No dev/test split has been made yet.
+9 labelled, 16 skipped (summary jobs and near-duplicates). Second batch (collector v2): 40 more
+logs reviewed. Total so far: **37 labelled, 28 skipped**, with no timeout_flaky or
+config_permissions examples yet. No dev/test split has been made yet.
 
 | file                | made by                     | purpose                                         |
 |---------------------|-----------------------------|-------------------------------------------------|
 | `LABELING_GUIDE.md` | me, by hand                 | rules for choosing a category consistently      |
+| `CHEAT_SHEET.md`    | me, by hand                 | ordered phrase → category table for labelling   |
 | `labels.csv`        | `python tools/label.py`     | one row per labelled log (single source of truth) |
 | `skipped.txt`       | `python tools/label.py`     | logs I skipped (shown again with `--retry-skipped`) |
 | `split.csv`         | `python evals/make_split.py`| which labelled logs are `dev` and which are `test` |
