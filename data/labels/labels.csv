@@ -8,3 +8,31 @@ data/raw/pandas-dev__pandas/43551818657_132323555225.log,test_failure,pandas-stu
 data/raw/pytest-dev__pytest/42777678942_129700092218.log,dependency_install,setup-python: Python 3.11.2 not available on Ubuntu 26.04 runner (runner image upgrade),2026-11-14T08:04:38+00:00
 data/raw/pytest-dev__pytest/43049244070_130621994413.log,test_failure,Windows symlink collection test: AssertionError passed 0 != 1,2026-11-14T08:06:51+00:00
 data/raw/pytest-dev__pytest/43079052021_130726642946.log,test_failure,gc refcount assertion 2 == 4 in test_raises_cyclic_reference (possibly GC-timing flaky),2026-11-14T08:07:37+00:00
+data/raw/eslint__eslint/42441998698_128612993437.log,lint_format,eslint rule test-case-property-ordering (eslint linting its own tests),2026-11-21T05:58:46+00:00
+data/raw/eslint__eslint/42488020394_128754059134.log,lint_format,,2026-11-21T06:09:09+00:00
+data/raw/eslint__eslint/42776018504_129694581352.log,lint_format,,2026-11-21T06:11:44+00:00
+data/raw/eslint__eslint/42781130886_129711187857.log,lint_format,,2026-11-21T06:43:30+00:00
+data/raw/eslint__eslint/43503291792_132154339930.log,lint_format,,2026-11-21T06:56:19+00:00
+data/raw/microsoft__TypeScript/43559934702_132341128055.log,compile_build_error,,2026-11-21T07:12:17+00:00
+data/raw/microsoft__TypeScript/43565968054_132359775479.log,network_infra,,2026-11-21T07:15:29+00:00
+data/raw/microsoft__TypeScript/43565968964_132359778144.log,network_infra,,2026-11-21T07:17:01+00:00
+data/raw/spring-projects__spring-boot/43471111725_132042952217.log,network_infra,,2026-11-21T08:46:44+00:00
+data/raw/vitejs__vite/43549089010_132307139852.log,compile_build_error,,2026-11-21T08:47:21+00:00
+data/raw/vitejs__vite/43549089127_132307140407.log,compile_build_error,,2026-11-21T08:47:35+00:00
+data/raw/eslint__eslint/42776018504_129694907230.log,dependency_install,,2026-11-21T09:33:44+00:00
+data/raw/eslint__eslint/42781951642_129713844002.log,lint_format,,2026-11-21T09:37:46+00:00
+data/raw/eslint__eslint/43518674382_132207096166.log,network_infra,,2026-11-21T09:38:18+00:00
+data/raw/microsoft__TypeScript/43559934702_132341128137.log,network_infra,,2026-11-21T09:42:04+00:00
+data/raw/microsoft__TypeScript/43565970845_132359784197.log,network_infra,,2026-11-21T09:42:19+00:00
+data/raw/microsoft__TypeScript/43568879983_132368678707.log,lint_format,,2026-11-21T09:50:00+00:00
+data/raw/spring-projects__spring-boot/43467192035_132029358180.log,compile_build_error,,2026-11-21T10:14:43+00:00
+data/raw/vitejs__vite/43549089127_132307225543.log,compile_build_error,,2026-11-21T10:16:42+00:00
+data/raw/spring-projects__spring-boot/43315703212_131523044234.log,test_failure,,2026-11-21T11:55:02+00:00
+data/raw/spring-projects__spring-boot/43315704236_131523047361.log,dependency_install,two failures: maven plugin 403 + integration tests,2026-11-21T12:09:39+00:00
+data/raw/spring-projects__spring-boot/43341323680_131610080276.log,network_infra,,2026-11-21T12:17:00+00:00
+data/raw/spring-projects__spring-boot/43347586659_131630571390.log,unknown,"real error not in log (only ""Unexpected error"")",2026-11-21T12:18:33+00:00
+data/raw/spring-projects__spring-boot/43467237750_132029527649.log,dependency_install,dependabot: security update blocked by version conflict (js-yaml),2026-11-21T12:21:00+00:00
+data/raw/vitejs__vite/43560807133_132343826704.log,lint_format,,2026-11-21T12:26:47+00:00
+data/raw/vitejs__vite/43560807133_132343921984.log,test_failure,,2026-11-21T12:27:58+00:00
+data/raw/vitejs__vite/43562500120_132349062646.log,lint_format,,2026-11-21T12:34:12+00:00
+data/raw/eslint__eslint/43485086012_132091280951.log,test_failure,,2026-11-21T12:41:11+00:00
