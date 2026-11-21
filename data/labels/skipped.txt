@@ -14,3 +14,15 @@ data/raw/pytest-dev__pytest/43049244070_130628547303.log
 data/raw/pytest-dev__pytest/43079052021_130733887781.log
 data/raw/pytest-dev__pytest/43549551824_132308716272.log
 data/raw/pytest-dev__pytest/43549551824_132313921402.log
+data/raw/eslint__eslint/43263137563_131339462799.log
+data/raw/microsoft__TypeScript/43565968054_132369555535.log
+data/raw/microsoft__TypeScript/43565968964_132369556413.log
+data/raw/microsoft__TypeScript/43565970845_132368004329.log
+data/raw/microsoft__TypeScript/43568879983_132375027730.log
+data/raw/vitejs__vite/43549089127_132307225539.log
+data/raw/vitejs__vite/43549089127_132307225560.log
+data/raw/vitejs__vite/43549089127_132307225571.log
+data/raw/vitejs__vite/43562498393_132349056754.log
+data/raw/spring-projects__spring-boot/43358228967_131665281515.log
+data/raw/spring-projects__spring-boot/43467237927_132029529200.log
+data/raw/spring-projects__spring-boot/43467238079_132029527311.log

@@ -242,7 +242,7 @@ Dockerfile, .dockerignore, requirements.txt, .env.example
 ## Roadmap
 
 - **Phase 1 (done):** rule-based baseline, API, demo, tests, CI.
-- **Phase 2 (tools done, labelling started: 9 of ~150):** collect and hand-label about 150 real CI logs from
+- **Phase 2 (tools done, labelling in progress: 37 of ~150):** collect and hand-label about 150 real CI logs from
   public repos, with a held-out test set, then report the rule-based baseline's dev/test results.
 - **Phase 3 (code done, waiting for labels):** TF-IDF + logistic regression model and an evaluation
   script comparing it with the rules on the same logs. Results come once Phase 2's labels and split exist.
