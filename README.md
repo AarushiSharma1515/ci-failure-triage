@@ -207,6 +207,33 @@ logistic regression (`class_weight="balanced"`).
 **No results yet** for the same reason as above. With ~150 labels the model will still be
 trained on only ~100 logs, so expect its number to move a lot as labels are added.
 
+### LLM + retrieval (Phase 4, code only)
+
+`triage/llm.py` sends the failed step of a log (with line numbers, end kept if it is long) to
+Claude and asks for a structured answer: one of the 8 categories, the line that caused the
+failure, a short explanation and a suggested fix. The system prompt carries the labelling rules
+from `LABELING_GUIDE.md`, and logs are treated as data, never as instructions.
+
+`triage/retrieval.py` finds the most similar **labelled dev logs** (TF-IDF cosine similarity over
+the same normalised text the ML model uses) and shows up to 3 of them to Claude as worked
+examples, with the labeller's notes. TF-IDF needs no extra service, so runs are reproducible;
+swapping in embeddings later is a one-class change and can be compared with `--k`.
+
+`evals/run_llm_eval.py` scores rules, ML model and LLM **on the same logs** and writes
+`evals/results/llm_<split>.md`, including the LLM's cause line for every log it got wrong.
+
+- Retrieved examples come only from dev logs, and never from the log's own workflow run.
+- `--k 0` turns retrieval off, to measure what the examples are worth.
+- `--limit N` tries the first N logs only. Before sending anything the script prints how many
+  requests it will make and a rough price, and asks for confirmation (`--yes` skips the question).
+- Answers are cached in `evals/cache/llm/` (git-ignored, it contains log excerpts), so a re-run
+  only pays for new requests.
+- Default model `claude-opus-5-5` at effort `low`; change with `--model` / `--effort` or the
+  `CI_TRIAGE_LLM_MODEL` / `CI_TRIAGE_LLM_EFFORT` environment variables. Needs `ANTHROPIC_API_KEY`
+  (see `.env.example`).
+
+**No results yet**: like Phase 3, it waits for ~150 labels and the frozen split.
+
 ## Folder map
 
 ```
@@ -217,6 +244,8 @@ triage/            core logic (no web code)
   sections.py        find the failed step's section in a GitHub Actions job log
   signature.py       normalised "error signature" used to spot near-duplicate logs
   ml.py              Phase 3 model: TF-IDF + logistic regression over the failed step
+  retrieval.py       Phase 4: find similar labelled dev logs to show as examples
+  llm.py             Phase 4: classify with Claude (structured answer, cached on disk)
   schemas.py         pydantic request/response models
 app/
   main.py            FastAPI app and endpoints
@@ -233,6 +262,8 @@ evals/
   make_split.py          stratified dev/test split (fixed seed, refuses to overwrite)
   run_baseline_eval.py   accuracy / precision / recall / confusion matrix, per split
   run_ml_eval.py         rules vs ML model on the same logs (dev: cross-validated; test: trained on dev)
+  run_llm_eval.py        rules vs ML vs LLM + retrieval on the same logs (asks before spending)
+  cache/llm/             cached LLM answers (git-ignored)
   results/               Markdown reports written by the eval (created when it runs)
 tests/               pytest tests
 .github/workflows/ci.yml   runs pytest on push and pull request
@@ -246,7 +277,8 @@ Dockerfile, .dockerignore, requirements.txt, .env.example
   public repos, with a held-out test set, then report the rule-based baseline's dev/test results.
 - **Phase 3 (code done, waiting for labels):** TF-IDF + logistic regression model and an evaluation
   script comparing it with the rules on the same logs. Results come once Phase 2's labels and split exist.
-- **Phase 4:** LLM + retrieval (embeddings over similar past failures), compared against Phases 1 and 3 on the same test set.
+- **Phase 4 (code done, waiting for labels):** LLM + retrieval (similar labelled past failures shown
+  as examples), compared against Phases 1 and 3 on the same logs.
 - **Phase 5:** LangGraph agent, with the evaluation running in CI.
 
 ## Licence

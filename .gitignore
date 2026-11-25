@@ -16,3 +16,6 @@ data/raw/*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Cached LLM answers: they contain excerpts of raw logs, so never commit them
+evals/cache/
