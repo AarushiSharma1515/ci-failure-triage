@@ -1,10 +1,13 @@
-"""FastAPI service for Phase 1 (rule-based) CI failure triage.
+"""FastAPI service for CI failure triage: the rule-based classifier, plus the ML model when
+labelled real logs are available on this machine.
 
 Endpoints are plain `def` (not `async def`): the work is CPU-bound regex
 matching, so FastAPI runs each request in a worker thread for us.
 """
 
 import json
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.real_logs import RealLogSet, load_real_logs, ml_prediction
 from triage.categories import CATEGORIES
 from triage.clean import LogNotTextError, LogTooLargeError, clean_log, find_interesting_lines
 from triage.rules import classify
@@ -21,6 +25,7 @@ MODEL_NAME = "rule-based v0"
 BASE_DIR = Path(__file__).resolve().parent.parent
 SAMPLES_DIR = BASE_DIR / "data" / "samples"
 DEMO_PAGE = BASE_DIR / "app" / "static" / "demo.html"
+LABELS_FILE = BASE_DIR / "data" / "labels" / "labels.csv"
 
 
 def load_sample_index() -> dict[str, dict]:
@@ -31,7 +36,27 @@ def load_sample_index() -> dict[str, dict]:
 
 SAMPLE_INDEX = load_sample_index()
 
-app = FastAPI(title="CI Failure Triage (Phase 1: rule-based)", version="0.1.0")
+# Labelled real logs and the ML model trained on them. Loaded once, on first use (or at
+# startup), because reading the logs and training takes a few seconds.
+_real_logs: RealLogSet | None = None
+_real_logs_lock = threading.Lock()
+
+
+def real_logs() -> RealLogSet:
+    global _real_logs
+    with _real_logs_lock:
+        if _real_logs is None:
+            _real_logs = load_real_logs(LABELS_FILE, BASE_DIR)
+        return _real_logs
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    real_logs()  # warm up, so the first visitor does not wait
+    yield
+
+
+app = FastAPI(title="CI Failure Triage", version="0.2.0", lifespan=lifespan)
 
 
 def error(status: int, message: str) -> JSONResponse:
@@ -84,6 +109,34 @@ def get_sample(name: str):
     return {"name": name, "expected_category": SAMPLE_INDEX[name]["expected_category"], "log": text}
 
 
+@app.get("/real-logs")
+def list_real_logs():
+    real = real_logs()
+    logs = real.logs
+    with_ml = [log for log in logs if log.ml is not None]
+    return {
+        "count": len(logs),
+        "rules_correct": sum(log.rules == log.human for log in logs),
+        "ml_scored": len(with_ml),
+        "ml_correct": sum(log.ml == log.human for log in with_ml),
+        "ml_folds": real.folds,
+        "logs": [
+            {"id": log.id, "repo": log.repo, "job_name": log.job_name, "url": log.url,
+             "human": log.human, "note": log.note, "rules": log.rules, "ml": log.ml}
+            for log in logs
+        ],
+    }
+
+
+@app.get("/real-logs/{log_id}", responses={404: {"model": ErrorResponse}})
+def get_real_log(log_id: int):
+    logs = real_logs().logs
+    if not 0 <= log_id < len(logs):
+        return error(404, f"Unknown real log {log_id}. See GET /real-logs.")
+    log = logs[log_id]
+    return {"id": log.id, "repo": log.repo, "human": log.human, "note": log.note, "log": log.text}
+
+
 @app.post(
     "/triage",
     response_model=TriageResponse,
@@ -112,4 +165,5 @@ def triage(request: TriageRequest):
         scores=result["scores"],
         error_context=[{"line_number": n, "text": t} for n, t in context],
         model=MODEL_NAME,
+        ml=ml_prediction(real_logs(), request.log),
     )

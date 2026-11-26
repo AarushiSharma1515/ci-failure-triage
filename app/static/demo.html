@@ -9,14 +9,14 @@
     --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5b6475;
     --border: #d9dde5; --accent: #2457c5; --accent-text: #ffffff;
     --banner-bg: #fff4d6; --banner-text: #5a4300;
-    --err-bg: #fde8e8; --err-text: #8a1c1c; --code-bg: #f0f2f5;
+    --err-bg: #fde8e8; --err-text: #8a1c1c; --code-bg: #f0f2f5; --ok: #1d7a3a;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14171c; --card: #1d2128; --text: #e6e9ef; --muted: #a0a8b8;
       --border: #333a45; --accent: #6b9bff; --accent-text: #0b1220;
       --banner-bg: #3a3112; --banner-text: #f3dd9a;
-      --err-bg: #3d1c1c; --err-text: #ffb4b4; --code-bg: #262b33;
+      --err-bg: #3d1c1c; --err-text: #ffb4b4; --code-bg: #262b33; --ok: #7fd69a;
     }
   }
   * { box-sizing: border-box; }
@@ -70,14 +70,32 @@
   .meter { height: 8px; background: var(--code-bg); border-radius: 4px; overflow: hidden; max-width: 260px; }
   .meter > div { height: 100%; background: var(--accent); }
   details summary { cursor: pointer; color: var(--muted); margin-top: 16px; }
+  .compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 0 0 4px; }
+  .compare > div { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .who { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .compare .what { font-weight: 700; font-size: 18px; overflow-wrap: anywhere; }
+  .score { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 12px; }
+  .score > div { flex: 1 1 160px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .score .big { font-size: 26px; font-weight: 700; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; border-top: none; }
+  td.ok { color: var(--ok); }
+  td.bad { color: var(--err-text); }
+  td button { font-size: 13px; padding: 2px 10px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  select { font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); }
+  a { color: var(--accent); }
 </style>
 </head>
 <body>
-<div class="banner">Phase 1: rule-based baseline. LLM and retrieval versions are on the roadmap.</div>
+<div class="banner">Rules + ML model. The LLM + retrieval version is evaluated offline (evals/run_llm_eval.py).</div>
 <main>
   <h1>CI Failure Triage</h1>
-  <p class="lead">Paste a failing CI build log. Transparent keyword/regex rules suggest a failure category,
-    show the lines that matched, and suggest a next step. No AI model is used in this version.</p>
+  <p class="lead">Paste a failing CI build log, or pick a real failure below. Transparent keyword/regex rules
+    and a small ML model (trained on hand-labelled real logs) each suggest a failure category; the rules also
+    show the lines that matched and a next step.</p>
 
   <div class="card">
     <label for="log">CI log</label>
@@ -92,6 +110,15 @@
   </div>
 
   <div id="result" class="card hidden" aria-live="polite">
+    <div class="compare">
+      <div id="r-human-box" class="hidden"><div class="who">Human label</div><div class="what" id="r-human"></div></div>
+      <div><div class="who">Rules say</div><div class="what" id="r-rules-cat"></div></div>
+      <div id="r-ml-box"><div class="who">ML model says</div><div class="what" id="r-ml"></div>
+        <div class="hint" id="r-ml-detail"></div></div>
+    </div>
+    <p class="hint" id="r-agree"></p>
+
+    <h2>Rules: details</h2>
     <p class="category" id="r-category"></p>
     <p class="muted" id="r-description"></p>
 
@@ -112,6 +139,31 @@
       <summary>Error-looking lines with context</summary>
       <div id="r-context"></div>
     </details>
+  </div>
+
+  <div id="real" class="card hidden">
+    <h2 style="margin-top:0">Real failures from open-source projects</h2>
+    <p class="hint" id="real-intro"></p>
+    <div class="score">
+      <div><div class="who">Rules correct</div><div class="big" id="real-rules"></div></div>
+      <div><div class="who">ML model correct</div><div class="big" id="real-ml"></div></div>
+    </div>
+    <p class="hint" id="real-method"></p>
+    <div class="filters">
+      <label for="real-filter" class="hint" style="margin:0;font-weight:400">Show:</label>
+      <select id="real-filter">
+        <option value="all">all logs</option>
+        <option value="ml-right-rules-wrong">ML right, rules wrong</option>
+        <option value="rules-right-ml-wrong">rules right, ML wrong</option>
+        <option value="both-wrong">both wrong</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Project / job</th><th>Human label</th><th>Rules</th><th>ML</th><th></th></tr></thead>
+        <tbody id="real-rows"></tbody>
+      </table>
+    </div>
   </div>
 </main>
 
@@ -155,7 +207,30 @@
     return box;
   }
 
+  // The human label of the real log currently in the text box (null for pasted text).
+  let currentHuman = null;
+
   function render(r) {
+    byId("r-rules-cat").textContent = r.category;
+    byId("r-human-box").classList.toggle("hidden", !currentHuman);
+    byId("r-human").textContent = currentHuman || "";
+    if (r.ml) {
+      byId("r-ml").textContent = r.ml.category;
+      byId("r-ml-detail").textContent = Math.round(r.ml.probability * 100) + "% sure, trained on "
+        + r.ml.trained_on + " labelled real logs";
+      byId("r-ml-box").classList.remove("hidden");
+    } else {
+      byId("r-ml-box").classList.add("hidden");
+    }
+    let agree = "";
+    if (currentHuman) {
+      agree = "Rules " + (r.category === currentHuman ? "match" : "do not match") + " the human label";
+      if (r.ml) agree += "; ML " + (r.ml.category === currentHuman ? "matches" : "does not match") + " it";
+      agree += ". (The table below scores the ML model on logs it never saw; this live model was trained on all of them.)";
+    } else if (r.ml) {
+      agree = r.ml.category === r.category ? "Rules and ML agree." : "Rules and ML disagree.";
+    }
+    byId("r-agree").textContent = agree;
     byId("r-category").textContent = r.category;
     byId("r-description").textContent = r.description;
     byId("r-confidence").textContent = Math.round(r.confidence * 100) + "%";
@@ -214,10 +289,99 @@
       const body = await response.json();
       if (!response.ok) { showError(body.error || "Could not load that sample."); return; }
       byId("log").value = body.log;
+      currentHuman = null;
       updateSize();
       byId("result").classList.add("hidden");
     } catch (e) {
       showError("Could not load that sample.");
+    }
+  }
+
+  async function loadRealLog(id) {
+    hideError();
+    try {
+      const response = await fetch("/real-logs/" + encodeURIComponent(id));
+      const body = await response.json();
+      if (!response.ok) { showError(body.error || "Could not load that log."); return; }
+      byId("log").value = body.log;
+      updateSize();
+      currentHuman = body.human;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      await triage();
+    } catch (e) {
+      showError("Could not load that log.");
+    }
+  }
+
+  let realLogs = [];
+
+  function markCell(text, ok) {
+    return el("td", ok ? "ok" : "bad", (ok ? "✓ " : "✗ ") + text);
+  }
+
+  function renderRealRows() {
+    const filter = byId("real-filter").value;
+    const rows = [];
+    for (const log of realLogs) {
+      const rulesOk = log.rules === log.human, mlOk = log.ml === log.human;
+      if (filter === "ml-right-rules-wrong" && !(mlOk && !rulesOk)) continue;
+      if (filter === "rules-right-ml-wrong" && !(rulesOk && !mlOk)) continue;
+      if (filter === "both-wrong" && (mlOk || rulesOk)) continue;
+      const where = el("td");
+      if (log.url) {
+        const a = el("a", "", log.repo);
+        a.href = log.url;  // the server only sends links to github.com (see app/real_logs.py)
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        where.append(a);
+      } else {
+        where.append(el("span", "", log.repo));
+      }
+      if (log.job_name) where.append(el("div", "hint", log.job_name));
+      const human = el("td", "", log.human);
+      if (log.note) human.title = log.note;
+      const ml = log.ml ? markCell(log.ml, mlOk) : el("td", "hint", "n/a");
+      const action = el("td");
+      const button = el("button", "", "Try it");
+      button.type = "button";
+      button.addEventListener("click", () => loadRealLog(log.id));
+      action.append(button);
+      const tr = el("tr");
+      tr.append(where, human, markCell(log.rules, rulesOk), ml, action);
+      rows.push(tr);
+    }
+    if (!rows.length) {
+      const td = el("td", "hint", "No logs match this filter.");
+      td.colSpan = 5;
+      const tr = el("tr");
+      tr.append(td);
+      rows.push(tr);
+    }
+    byId("real-rows").replaceChildren(...rows);
+  }
+
+  const pct = (part, whole) => whole ? Math.round(100 * part / whole) + "%" : "n/a";
+
+  async function loadRealLogs() {
+    try {
+      const response = await fetch("/real-logs");
+      const body = await response.json();
+      if (!response.ok || !body.count) return;  // no labelled logs on this machine
+      realLogs = body.logs;
+      const repos = new Set(realLogs.map((l) => l.repo)).size;
+      byId("real-intro").textContent = body.count + " failed GitHub Actions jobs from " + repos
+        + " open-source projects, each labelled by hand. Click a project to open the job on GitHub, or Try it to triage it here.";
+      byId("real-rules").textContent = body.rules_correct + " / " + body.count + " (" + pct(body.rules_correct, body.count) + ")";
+      byId("real-ml").textContent = body.ml_scored
+        ? body.ml_correct + " / " + body.ml_scored + " (" + pct(body.ml_correct, body.ml_scored) + ")" : "n/a";
+      byId("real-method").textContent = body.ml_scored
+        ? "ML scores are " + body.ml_folds + "-fold cross-validated by workflow run: each log was predicted by a model "
+          + "trained only on other runs. Early numbers on a small, uneven sample; labelling is still in progress."
+        : "Too few labelled logs to score the ML model yet.";
+      renderRealRows();
+      byId("real").classList.remove("hidden");
+    } catch (e) {
+      // The real-log section is optional: leave it hidden.
     }
   }
 
@@ -238,14 +402,17 @@
   }
 
   byId("triage").addEventListener("click", triage);
+  byId("real-filter").addEventListener("change", renderRealRows);
   byId("clear").addEventListener("click", () => {
+    currentHuman = null;
     byId("log").value = "";
     updateSize();
     hideError();
     byId("result").classList.add("hidden");
   });
-  byId("log").addEventListener("input", updateSize);
+  byId("log").addEventListener("input", () => { currentHuman = null; updateSize(); });
   loadSampleButtons();
+  loadRealLogs();
 </script>
 </body>
 </html>
