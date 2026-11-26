@@ -26,6 +26,12 @@ class ContextLine(BaseModel):
     text: str
 
 
+class MLPrediction(BaseModel):
+    category: str
+    probability: float         # the model's own probability for that category
+    trained_on: int            # number of labelled real logs the model learned from
+
+
 class TriageResponse(BaseModel):
     category: str
     description: str
@@ -36,6 +42,7 @@ class TriageResponse(BaseModel):
     scores: dict[str, int]     # total rule weight per category
     error_context: list[ContextLine]  # error-looking lines plus a little context
     model: str
+    ml: MLPrediction | None = None    # the ML model's answer, when labelled logs are available
 
 
 class ErrorResponse(BaseModel):

@@ -11,7 +11,7 @@ def test_demo_page_is_served():
     r = TestClient(app).get("/demo")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "Phase 1: rule-based baseline" in r.text
+    assert "Rules + ML model" in r.text
 
 
 def test_demo_never_uses_inner_html():
