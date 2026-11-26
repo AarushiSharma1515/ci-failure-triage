@@ -57,10 +57,12 @@ def make_log(*lines):
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def fake_github(job_log_status=200, jobs=None, logs=None):
-    """A fake GitHub API. jobs = {run_id: [job, ...]}; logs = {job_id: bytes} (default JOB_LOG)."""
+def fake_github(job_log_status=200, jobs=None, logs=None, jobs_status=None):
+    """A fake GitHub API. jobs = {run_id: [job, ...]}; logs = {job_id: bytes} (default JOB_LOG);
+    jobs_status = {run_id: HTTP status} for runs whose job list fails."""
     jobs = jobs or DEFAULT_JOBS
     logs = logs or {}
+    jobs_status = jobs_status or {}
     runs_page_1 = {"workflow_runs": [
         {"id": run_id, "html_url": f"https://github.com/o/r/actions/runs/{run_id}",
          "created_at": "2026-11-01T00:00:00Z"}
@@ -77,6 +79,8 @@ def fake_github(job_log_status=200, jobs=None, logs=None):
                 return FakeResponse(json_data=runs_page_1 if params["page"] == 1 else {"workflow_runs": []})
             if url.endswith("/jobs"):
                 run_id = int(url.split("/runs/")[1].split("/")[0])
+                if run_id in jobs_status:
+                    return FakeResponse(status_code=jobs_status[run_id])
                 return FakeResponse(json_data={"jobs": jobs[run_id]})
             if url.endswith("/logs"):
                 job_id = int(url.split("/jobs/")[1].split("/")[0])
@@ -186,6 +190,15 @@ def test_expired_logs_are_skipped(monkeypatch, tmp_path):
     monkeypatch.setattr(f, "make_session", lambda token: fake_github(job_log_status=410))
     f.main(["o/r", "--out", str(tmp_path)])
     assert read_manifest(tmp_path) == []
+
+
+def test_run_with_github_server_error_is_skipped(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(f.time, "sleep", lambda seconds: None)
+    session = use_fake(monkeypatch, jobs_status={111: 502})
+    f.main(["o/r", "--out", str(tmp_path)])
+    assert [row["job_id"] for row in read_manifest(tmp_path)] == ["3"]   # run 222 still collected
+    assert sum(url.endswith("/runs/111/jobs") for url in session.calls) == 2  # retried once
+    assert "run 111: GitHub server error 502" in capsys.readouterr().out
 
 
 def test_old_manifest_format_is_refused(fake_session, tmp_path, capsys):

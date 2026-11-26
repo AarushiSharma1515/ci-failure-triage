@@ -51,6 +51,7 @@ REPO_RE = re.compile(r"^[A-Za-z0-9-]+/(?!\.{1,2}$)[A-Za-z0-9_.-]+$")
 DEFAULT_OUT = PROJECT_ROOT / "data" / "raw"
 MAX_RATE_LIMIT_WAIT_SECONDS = 300  # wait up to 5 minutes; beyond that, stop and tell the user
 TIMEOUT_SECONDS = 30
+SERVER_ERROR_WAIT_SECONDS = 5  # pause before retrying once after a GitHub 5xx
 RUNS_PER_PAGE = 20
 MAX_RUN_PAGES = 10                 # look at most 200 failed runs back in history
 FAILED_CONCLUSIONS = {"failure", "timed_out"}
@@ -132,12 +133,24 @@ def iter_failed_runs(session, repo: str):
 
 
 def failed_jobs(session, repo: str, run_id: int) -> list[dict]:
-    """Return only the jobs of this run that failed (or timed out)."""
-    response = get_with_rate_limit(
-        session,
-        f"{API}/repos/{repo}/actions/runs/{run_id}/jobs",
-        params={"filter": "latest", "per_page": 100},
-    )
+    """Return only the jobs of this run that failed (or timed out).
+
+    If GitHub keeps answering with a server error (5xx) for this run, the run is skipped
+    instead of stopping the whole collection: some runs fail this way every time.
+    """
+    for attempt in range(2):
+        response = get_with_rate_limit(
+            session,
+            f"{API}/repos/{repo}/actions/runs/{run_id}/jobs",
+            params={"filter": "latest", "per_page": 100},
+        )
+        if response.status_code < 500:
+            break
+        if attempt == 0:
+            time.sleep(SERVER_ERROR_WAIT_SECONDS)
+    else:
+        print(f"  run {run_id}: GitHub server error {response.status_code} listing its jobs, skipping")
+        return []
     response.raise_for_status()
     return [j for j in response.json().get("jobs", []) if j.get("conclusion") in FAILED_CONCLUSIONS]
 
