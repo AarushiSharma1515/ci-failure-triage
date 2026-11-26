@@ -6,6 +6,8 @@ pydantic==2.14.3
 requests==2.34.2
 # Phase 3 ML model (triage/ml.py, evals/run_ml_eval.py); pulls in numpy and scipy
 scikit-learn==1.7.2
+# Phase 4 LLM classifier (triage/llm.py, evals/run_llm_eval.py)
+anthropic==2.14.0
 # Testing (httpx is needed by FastAPI's TestClient)
 pytest==9.2.0
 httpx==0.28.1
